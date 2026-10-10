@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["boot/image", "crates/uart16550", "kernel"]
+# `cargo build` / `cargo run` from the repository root should build the boot image, which in
+# turn builds the kernel artifact. The kernel itself cannot be built for the host toolchain.
+default-members = ["boot/image"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.lints.rust]
+# Every operation inside an `unsafe fn` must still be wrapped in an explicit `unsafe` block.
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# AGENTS.md requires a nearby safety comment for every `unsafe` block; this lint enforces it
+# and becomes a hard error because CI runs clippy with `-D warnings`.
+undocumented_unsafe_blocks = "warn"
+
+# The project licence is deliberately undecided (see LICENCE-STATUS.md and ADR-0013), so no
+# `license` field is set anywhere in this workspace.

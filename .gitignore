@@ -1,0 +1,6 @@
+# Rust build output. Never committed: contains generated binaries and downloaded crates.
+/target/
+
+# Generated boot images, serial logs and other test artifacts produced by
+# tools/test/qemu-smoke.sh and the boot image builder. Never committed.
+/build/

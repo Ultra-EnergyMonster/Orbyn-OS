@@ -1,0 +1,6 @@
+# `boot/image` depends on the `kernel` crate as a build-time *artifact* dependency
+# (cargo builds the kernel ELF for x86_64-unknown-none and exposes its path to build.rs).
+# That cargo feature is still unstable, so it must be opted into explicitly.
+# Required by `bootloader` 0.11 disk-image creation; see docs/architecture/adr/ADR-0003-boot-path.md.
+[unstable]
+bindeps = true

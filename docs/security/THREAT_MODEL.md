@@ -42,6 +42,29 @@
 - Programs that assume Windows kernel behaviour or load vulnerable drivers.
 - Compatibility layers exposing undocumented services or unsafe handles.
 
+## Current stage: milestone 1 (boot prototype, 2026-10-10)
+
+What is present, and what is deliberately absent, in the only currently implemented stage:
+
+- **Present:** a `no_std` kernel with a single entry path, a diagnostic serial console, a controlled
+  panic-and-halt path, and bounded serial polling so faulty hardware cannot hang the kernel. Test
+  images are generated files only; the smoke test never attaches a physical disk or host boot device.
+  The toolchain is date-pinned and dependencies are pinned exactly (`bootloader` 0.11.17).
+- **Absent (so no protection is claimed):** any memory protection of our own, privilege separation,
+  userspace, syscalls, capability/permission model, sandboxing, signed/verified boot, secure update,
+  recovery, networking, or untrusted-input parsing.
+- **Attacker-relevant surface at this stage:** the firmware/bootloader handoff. `BootInfo`
+  (memory map, framebuffer, RSDP) is untrusted input that milestone 1 merely *prints* — it is not
+  validated or used, so an incorrect map currently has no consequence beyond misleading output, and
+  milestone 2 must treat it as hostile. The reused `bootloader` component is third-party code
+  (experimental upstream) pinned at one exact version and treated as an external ABI we do not
+  control.
+- **Host safety:** this stage writes only files under the repository's gitignored `build/` directory
+  and reads system firmware read-only. It does not modify host boot configuration, write physical
+  disks, load kernel modules or run downloaded binaries.
+- **Not a security claim:** none of the above means the prototype is secure. It has no independent
+  review, no adversarial testing and no threat coverage beyond the notes here.
+
 ## Staged mitigations
 
 Early stages: no execution support; parser tests must use benign test fixtures and never launch untrusted files. Later stages: safe parser, least-privilege loader, runtime isolation, download-origin metadata, transparent warning UI, app-specific data directories/prefixes, controlled IPC, reproducible compatibility tests, uninstall/rollback, and vulnerability reporting process.

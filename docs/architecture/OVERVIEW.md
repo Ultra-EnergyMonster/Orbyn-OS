@@ -1,6 +1,6 @@
 # Architecture Overview
 
-**Status:** initial design outline; architecture decisions remain proposed until the first experiments and ADR reviews are complete.
+**Status:** initial design outline. Layers 1–2 are partially implemented and boot-tested at their smallest size (milestone 1); every other layer is planned only. ADR-0003, ADR-0004 and ADR-0005 are now accepted on boot-experiment evidence; ADR-0002, ADR-0007 and ADR-0013 remain proposed.
 
 ## Goal
 
@@ -32,4 +32,21 @@ The desktop shell's ability to associate `.exe` files is not Windows compatibili
 
 ## Current implementation state
 
-This document is a plan only. No kernel, loader, desktop, driver model or runtime should be listed as implemented until it exists and has corresponding verification evidence.
+**Booting and serial diagnostics only (milestone 1, 2026-10-10).** What exists and is verified:
+
+- Our own kernel crate (`kernel/`) with an x86-64 `no_std` entry path reached from the reused
+  `bootloader` 0.11.17 component, a controlled panic path, a bounded halt loop, and a polled 16550
+  serial console (`crates/uart16550/`).
+- Bootable BIOS and UEFI disk images generated from the kernel ELF by `boot/image`, with a bounded
+  QEMU smoke test (`tools/test/qemu-smoke.sh`) that asserts a guest-originated serial marker.
+- A pinned nightly toolchain, least-privilege CI definition, and the evidence record in
+  `docs/verification/M1-BOOT-EVIDENCE.md`.
+
+**Nothing else is implemented.** Specifically absent: page tables of our own, a physical or virtual
+allocator, interrupt/exception handling, timers, scheduling, threads/processes, syscalls, userspace,
+any driver model, any storage/filesystem/network/audio/input driver, graphics or compositor, the
+desktop shell, the file manager, the package manager, the installer, and the entire Windows
+compatibility programme (PE parsing, loader, Win32 APIs). The kernel only *prints* the memory map and
+framebuffer details that the bootloader reports; it does not validate or use them yet (M2).
+
+Do not describe any planned item above as existing until it has verification evidence.

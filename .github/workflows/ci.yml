@@ -1,0 +1,76 @@
+name: CI
+
+# Least privilege (AGENTS.md rule 6, ADR-0012): this workflow only reads the repository. No job
+# needs write access and no secrets are referenced anywhere, so workflow runs triggered by pull
+# requests from forks have no credentials to reach.
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: Format, lint and unit tests
+    runs-on: ubuntu-24.04
+    # Hard bound so a broken toolchain or hung build cannot occupy a runner indefinitely.
+    timeout-minutes: 30
+    steps:
+      # Pinned to an immutable commit SHA (verified against
+      # https://api.github.com/repos/actions/checkout/commits/v5 on 2026-10-10).
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # rust-toolchain.toml pins the nightly channel, the rust-src/llvm-tools components and the
+      # bare-metal targets, so this installs exactly what the kernel build needs.
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint kernel and UART driver for the bare-metal target
+        run: cargo clippy --target x86_64-unknown-none -p kernel -p uart16550 -- -D warnings
+
+      - name: Lint host-side crates
+        run: cargo clippy -p uart16550 -p boot-image --all-targets -- -D warnings
+
+      # Unit tests only run for crates that can be built for the host. The kernel is a bare-metal
+      # binary and cannot be host-tested; it is covered by the boot smoke test below instead.
+      - name: Unit tests
+        run: cargo test -p uart16550
+
+  boot-smoke:
+    name: QEMU boot smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: checks
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # QEMU and the OVMF UEFI firmware from the Ubuntu archive. `qemu-system-x86` pulls a large
+      # dependency tree; the smoke test itself has its own timeout inside the script.
+      - name: Install QEMU and OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf
+
+      - name: Build kernel and boot images
+        run: cargo build -p boot-image
+
+      # The script is the same one developers run locally. It only attaches generated image files
+      # under build/boot/ plus a read-only copy-on-write OVMF vars store; it never touches a
+      # physical disk, host block device or host boot configuration. A timeout alone is not a pass:
+      # the assertion is the guest kernel's own serial marker.
+      - name: Boot the BIOS image
+        run: ./tools/test/qemu-smoke.sh bios
+
+      - name: Boot the UEFI image
+        run: ./tools/test/qemu-smoke.sh uefi

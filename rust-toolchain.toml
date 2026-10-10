@@ -1,0 +1,10 @@
+# Toolchain pin for the kernel build (see ADR-0004).
+#
+# `bootloader` 0.11.17 requires a nightly compiler (the ADR-0003 boot experiment), `llvm-tools`
+# for linking, and `rust-src` because it builds its BIOS/UEFI bootloader stages with
+# `-Zbuild-std`. The date is pinned so local builds and CI resolve the same compiler.
+# Verified with rustc 1.101.0-nightly (1d81eb4ad 2026-10-07).
+[toolchain]
+channel = "nightly-2026-10-08"
+components = ["rustfmt", "clippy", "llvm-tools", "rust-src"]
+targets = ["x86_64-unknown-none", "x86_64-unknown-uefi"]
