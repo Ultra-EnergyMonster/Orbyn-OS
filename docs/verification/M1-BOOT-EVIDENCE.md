@@ -72,6 +72,22 @@ the same marker) but not byte-for-byte. The difference is in the image's FAT/ESP
 kernel code, and the same kernel ELF is embedded in both images. No byte-for-byte reproducible-build
 claim is made for the UEFI image.
 
+## Clean-checkout verification (2026-10-10)
+
+The documented workflow was verified from a fresh clone of the committed branch rather than only in
+the working copy that produced it:
+
+```sh
+git clone --branch feat/kernel-m1-bootable-prototype <repository> /tmp/orbyn-clean-check
+```
+
+In that clone (commit `865b626`) every documented command was run and passed: `cargo fmt --all
+--check`, `cargo clippy --target x86_64-unknown-none -p kernel -p uart16550 -- -D warnings`,
+`cargo clippy -p uart16550 -p boot-image --all-targets -- -D warnings`, `cargo test -p uart16550`
+(5 passed), `cargo build -p boot-image` (kernel compiled and both images generated from nothing),
+and `./tools/test/qemu-smoke.sh bios` / `uefi` (both `PASS`). This is the same single Ubuntu 24.04
+x86-64 host as above; no second machine or other operating system was tested.
+
 ## Guest serial output (BIOS run, kernel lines only)
 
 The `INFO :`/`TRACE:` lines before this block come from the reused `bootloader` component; the

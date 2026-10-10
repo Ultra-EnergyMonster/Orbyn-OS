@@ -1,8 +1,9 @@
 # Milestones and Acceptance Checklist
 
-**Status:** M0 is in progress, M1 is verified (2026-10-10, QEMU boot tested), and M2 onwards are
-planned. Update this file only after real repository evidence exists; each verified claim below
-links to the evidence that supports it.
+**Status:** M0 is in progress (its documented checks now pass from a fresh clone, but the
+unresolved licence question and a first CI run are still outstanding), M1 is verified (2026-10-10,
+QEMU boot tested), and M2 onwards are planned. Update this file only after real repository evidence
+exists; each verified claim below links to the evidence that supports it.
 
 Use a status of `PLANNED`, `IN PROGRESS`, `BLOCKED`, or `VERIFIED`. For a VERIFIED milestone, link to the commit/PR and record the exact tests and environments. A code merge alone does not prove that a feature works.
 
@@ -22,12 +23,17 @@ Use a status of `PLANNED`, `IN PROGRESS`, `BLOCKED`, or `VERIFIED`. For a VERIFI
       that was verified against the GitHub API on 2026-10-10, no secrets referenced).
 - [x] Record dependency provenance and supported development host(s). — `boot/README.md` records
       `bootloader`/`bootloader_api` 0.11.17 (MIT OR Apache-2.0); BUILDING.md records the tested host.
-- [ ] Verify clean checkout instructions on at least one development environment. — The documented
-      commands were run in this working copy. A from-scratch clone (fresh directory or second
-      machine) is **NOT RUN**, so the clean-checkout claim is not yet evidenced.
+- [x] Verify clean checkout instructions on at least one development environment. — Verified
+      2026-10-10 by cloning the committed branch (`865b626`) into a fresh directory and running every
+      documented command there: `cargo fmt --all --check`, both clippy invocations,
+      `cargo test -p uart16550`, `cargo build -p boot-image` (kernel and both images generated from
+      nothing) and both `tools/test/qemu-smoke.sh` modes passed. Recorded in
+      `docs/verification/M1-BOOT-EVIDENCE.md`. This is still only the one Ubuntu 24.04 x86-64 host;
+      a second machine or another OS is **NOT RUN**.
 - **Gate:** clean checkout can run documented checks; no secrets or accidental binaries committed. —
-      Partially met: the checks run and nothing generated is committed, but the clean-checkout
-      verification and the CI run itself have not happened yet.
+      Met for this host: the documented checks pass from a fresh clone, nothing generated (`/build/`,
+      `/target/`) is committed, and the staged set was reviewed for secrets. The CI workflow itself
+      has still never executed.
 
 ## M1 — Bootable x86-64 kernel skeleton — `VERIFIED` (2026-10-10)
 
