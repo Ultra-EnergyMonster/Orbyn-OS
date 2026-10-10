@@ -34,6 +34,7 @@
 #![no_main]
 
 mod interrupts;
+mod paging;
 
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use bootloader_api::{BootInfo, entry_point};
@@ -43,7 +44,20 @@ use core::panic::PanicInfo;
 use physmem::{FrameAllocator, MapSummary, MapValidator, MemoryRegion, RegionKind};
 use uart16550::{SerialPort, TxOutcome};
 
-entry_point!(kernel_main);
+/// Bootloader configuration handed to the `bootloader` component through the `.bootloader-config`
+/// section.
+///
+/// The kernel needs to read paging-structure entries to translate the virtual addresses `BootInfo`
+/// reports (see [`paging`]), so it asks the bootloader to map all physical memory at a dynamic
+/// virtual offset. Without this, `BootInfo::physical_memory_offset` is `None` and translation is
+/// impossible — which is exactly what the first attempt at this slice found.
+pub static BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
+    let mut config = bootloader_api::BootloaderConfig::new_default();
+    config.mappings.physical_memory = Some(bootloader_api::config::Mapping::Dynamic);
+    config
+};
+
+entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
 /// I/O port base of the first legacy serial port (COM1). QEMU's `-serial` option is attached to
 /// this port, which is why the smoke test reads the guest log from there.
@@ -80,6 +94,12 @@ const TIMER_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_TIMER_OK";
 
 /// Timer interrupts the boot self-test waits for before declaring the timer working.
 const TIMER_SELF_TEST_TICKS: u64 = 3;
+
+/// Printed once the kernel has translated the virtual addresses `BootInfo` reports for its stack and
+/// the framebuffer with its own page-table walk, and reserved their physical frames.
+///
+/// Also asserted by `tools/test/qemu-smoke.sh`, so the translation cannot silently stop working.
+const PAGING_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_PAGING_OK";
 
 /// Physical address space the frame bitmap describes: the first 4 GiB.
 ///
@@ -290,6 +310,17 @@ fn report_boot_handoff(console: &mut SerialPort, boot_info: &BootInfo) {
         Some(addr) => write_line(console, format_args!("  ACPI RSDP address: {addr:#018x}")),
         None => write_line(console, format_args!("  ACPI RSDP address: not reported")),
     }
+
+    match boot_info.physical_memory_offset.as_ref() {
+        Some(offset) => write_line(
+            console,
+            format_args!("  physical memory offset: {offset:#018x}"),
+        ),
+        None => write_line(
+            console,
+            format_args!("  physical memory offset: not mapped (address translation unavailable)"),
+        ),
+    }
 }
 
 /// Translates a firmware region kind into the kernel's vocabulary.
@@ -466,14 +497,12 @@ fn build_frame_allocator(
     Some((allocator, totals))
 }
 
-/// Reserves physical memory the kernel knows it must not hand out, beyond what the map marks.
+/// Reserves physical memory the kernel must not hand out, beyond what the map marks.
 ///
-/// This covers the first MiB and the kernel image. It deliberately does **not** cover the kernel
-/// stack or the framebuffer: `BootInfo` exposes those as *virtual* addresses, so reserving them by
-/// physical address is not possible with the information the bootloader passes down. Rather than
-/// pretend, this function says so on the console, and the kernel relies on the bootloader having
-/// marked their frames non-usable in the map. That gap is recorded as a limitation in
-/// `docs/verification/M2-MEMORY-EVIDENCE.md`.
+/// This covers the first MiB, the kernel image, and — new in this slice — the kernel stack and the
+/// framebuffer, whose physical frames are now found by translating the virtual addresses `BootInfo`
+/// reports through [`paging::translate`] instead of being assumed protected. A frame reservation
+/// that the allocator rejects is reported but not fatal; see [`paging::reserve_translated`].
 fn reserve_kernel_memory(
     console: &mut SerialPort,
     allocator: &mut FrameAllocator<'_>,
@@ -494,17 +523,37 @@ fn reserve_kernel_memory(
         boot_info.kernel_len,
     );
 
-    let framebuffer = match boot_info.framebuffer.as_ref() {
-        Some(framebuffer) => framebuffer.buffer().as_ptr() as u64,
-        None => 0,
-    };
-    write_line(
+    // The kernel stack and the framebuffer are reported only as virtual addresses. Translate them
+    // through the page tables the bootloader installed and reserve their physical frames.
+    let stack_reserved = paging::reserve_translated(
         console,
-        format_args!(
-            "  not reservable by address (BootInfo exposes virtual addresses only): kernel stack at virtual {:#018x} + {} bytes, framebuffer at virtual {:#018x}",
-            boot_info.kernel_stack_bottom, boot_info.kernel_stack_len, framebuffer
-        ),
+        allocator,
+        boot_info,
+        "kernel stack",
+        boot_info.kernel_stack_bottom,
+        boot_info.kernel_stack_len,
     );
+
+    let framebuffer = boot_info.framebuffer.as_ref().map(|framebuffer| {
+        let buffer = framebuffer.buffer();
+        (buffer.as_ptr() as u64, buffer.len() as u64)
+    });
+    let framebuffer_reserved = match framebuffer {
+        Some((start, len)) => {
+            paging::reserve_translated(console, allocator, boot_info, "framebuffer", start, len)
+        }
+        None => {
+            write_line(
+                console,
+                format_args!("  framebuffer: none reported, nothing to reserve"),
+            );
+            true
+        }
+    };
+
+    if stack_reserved && framebuffer_reserved {
+        write_marker(console, PAGING_SUCCESS_MARKER);
+    }
 }
 
 /// Reserves one physical range and prints what was protected.

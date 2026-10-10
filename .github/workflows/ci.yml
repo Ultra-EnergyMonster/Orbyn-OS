@@ -39,14 +39,14 @@ jobs:
         run: cargo clippy --target x86_64-unknown-none -p kernel -p uart16550 -- -D warnings
 
       - name: Lint host-side crates
-        run: cargo clippy -p physmem -p uart16550 -p x86exc -p boot-image --all-targets -- -D warnings
+        run: cargo clippy -p physmem -p x86paging -p x86exc -p uart16550 -p boot-image --all-targets -- -D warnings
 
       # Unit tests only run for crates that can be built for the host (the UART driver, the
       # memory-map validation / frame allocator, and the exception encoding/decoding). The kernel
       # is a bare-metal binary and cannot be host-tested; it is covered by the boot smoke test
       # below instead.
       - name: Unit tests
-        run: cargo test -p physmem -p uart16550 -p x86exc
+        run: cargo test -p physmem -p uart16550 -p x86exc -p x86paging
 
   boot-smoke:
     name: QEMU boot smoke test

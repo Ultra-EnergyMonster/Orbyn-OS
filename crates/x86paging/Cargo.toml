@@ -1,0 +1,11 @@
+[package]
+name = "x86paging"
+description = "x86-64 paging: virtual-address decomposition, entry decoding and a 4-level translation walk (no_std)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

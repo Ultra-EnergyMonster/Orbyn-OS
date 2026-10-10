@@ -2,9 +2,9 @@
 
 **Status:** M0 is in progress (its documented checks now pass from a fresh clone, but the
 unresolved licence question and a first CI run are still outstanding), M1 is verified (2026-10-10,
-QEMU boot tested), M2 is in progress (memory-map validation, bootstrap frame allocation and exception
-reporting/controlled fatal handling are done; page tables and virtual memory are not), M3 is in
-progress (a PIT timer interrupt source is done; synchronisation primitives and the task/process model
+QEMU boot tested), M2 is in progress (memory-map validation, bootstrap frame allocation, exception reporting/controlled
+fatal handling and read-only address translation are done; our own page tables and virtual memory are
+not), M3 is in progress (a PIT timer interrupt source is done; synchronisation primitives and the task/process model
 are not), and M4 onwards are planned. Update this file only after real repository evidence exists; each verified claim below
 links to the evidence that supports it.
 
@@ -81,8 +81,11 @@ decisions in ADR-0015.
 - [ ] Establish early physical page management and virtual memory/page tables. — **Partial.**
       Physical frames are managed: a bitmap allocator over the first 4 GiB in 4 KiB frames, usable
       claims first, then every non-usable claim, plus explicit reservations for the first MiB and the
-      kernel image. **No virtual memory and no page tables of our own**: the kernel still executes on
-      the tables the bootloader created, and there is no deallocation.
+      kernel image. Read-only **address translation** now works: the kernel walks the page tables
+      `CR3` points at (host-tested `crates/x86paging`) and reserves the kernel stack and framebuffer
+      frames by translating their virtual addresses, instead of trusting the bootloader's classification.
+      **Still no page tables of our own**: the kernel executes on the bootloader's tables, `CR3` is
+      never written, and there is no `map`/`unmap`, no deallocation and no isolation.
 - [x] Add exception reporting and controlled fatal handling. — Our own GDT, a TSS whose `IST[1]`
       points at a dedicated 16 KiB stack, and a 256-entry IDT; one shared assembly path saves every
       register and calls a Rust dispatcher that reports the exception, its decoded error code, `cr2`
@@ -97,7 +100,9 @@ decisions in ADR-0015.
       overriding usable ones, call-order enforcement and rejected calls leaving state unchanged. A
       further 10 host tests in `crates/x86exc` cover the exception vector names, the error-code
       table (asserted exactly, because a wrong entry silently shifts the whole exception frame), the
-      IDT gate bit layout, the `GDTR`/`IDTR` pointer layout and page-fault error-code decoding.
+      IDT gate bit layout, the `GDTR`/`IDTR` pointer layout and page-fault error-code decoding. A
+      further 8 host tests in `crates/x86paging` cover virtual-address decomposition, canonicity,
+      4 KiB/2 MiB/1 GiB translation, the level that is not present, and flag-bit handling.
 - **Gate:** tests pass; faults produce useful diagnostics in QEMU; no unsupported memory-management claims. —
       **Met for these clauses:** tests pass (21 + 5 + 10 host tests), memory-map defects and a real
       page fault both produce useful diagnostics in QEMU, and the no-unsupported-claims rule is kept

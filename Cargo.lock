@@ -218,6 +218,7 @@ dependencies = [
  "physmem",
  "uart16550",
  "x86exc",
+ "x86paging",
 ]
 
 [[package]]
@@ -539,6 +540,10 @@ dependencies = [
 
 [[package]]
 name = "x86exc"
+version = "0.1.0"
+
+[[package]]
+name = "x86paging"
 version = "0.1.0"
 
 [[package]]

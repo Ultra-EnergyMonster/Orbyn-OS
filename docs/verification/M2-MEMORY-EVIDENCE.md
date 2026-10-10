@@ -5,6 +5,12 @@
 > and runs two fault self-tests before the memory work, and `tools/test/qemu-smoke.sh` asserts a third
 > marker (`NEW_OS_KERNEL_EXCEPTION_OK`) *before* the two markers described here. The current boot
 > evidence is `docs/verification/M2-EXCEPTION-EVIDENCE.md`.
+>
+> **Scope note 2 (added after the address-translation slice):** limitation 1 below — the kernel stack
+> and framebuffer not being reservable by address — is now **addressed**: the kernel translates their
+> virtual addresses by walking the installed page tables and reserves the resulting physical frames.
+> See `docs/verification/M2-PAGING-EVIDENCE.md`. The serial values here are still the memory-slice
+> ones and are unchanged.
 
 **Date:** 2026-10-10
 **Branch:** `feat/m2-boot-memory-and-frame-allocator` (stacked on the milestone-1 branch, still

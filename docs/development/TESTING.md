@@ -12,10 +12,11 @@ Commands were run from the repository root on 2026-10-10 in the environment reco
 ```sh
 cargo fmt --all --check                                                    # formatting
 cargo clippy --target x86_64-unknown-none -p kernel -p uart16550 -- -D warnings   # bare-metal target
-cargo clippy -p physmem -p uart16550 -p x86exc -p boot-image --all-targets -- -D warnings  # host-side
+cargo clippy -p physmem -p x86paging -p x86exc -p uart16550 -p boot-image --all-targets -- -D warnings  # host-side
 cargo test -p uart16550                                                    # host unit tests
 cargo test -p physmem                                                      # memory-map and allocator tests
 cargo test -p x86exc                                                       # exception encoding/decoding tests
+cargo test -p x86paging                                                    # address translation tests
 cargo build -p boot-image                                                  # kernel + boot images
 ./tools/test/qemu-smoke.sh bios                                            # boot smoke test (BIOS)
 ./tools/test/qemu-smoke.sh uefi                                            # boot smoke test (UEFI)
@@ -35,8 +36,9 @@ correctness. Tests are run per package.
 | `cargo test -p uart16550` | The pure baud-divisor arithmetic and the port-handle accessor behave as asserted, on the host, without touching hardware | That real UART I/O works; that a boot happens |
 | `cargo test -p physmem` | Memory-map validation and the bitmap frame allocator behave as asserted for well-formed and malformed input, on the host, without touching hardware | That the firmware map on a real machine looks like the fixtures; that the kernel uses the allocator correctly |
 | `cargo test -p x86exc` | The exception vector metadata, the error-code table, the IDT gate bit layout, the table-pointer layout and page-fault error-code decoding behave as asserted, on the host | That the IDT is executed, that a fault is delivered, or that the assembly stubs/copies are correct |
+| `cargo test -p x86paging` | Virtual-address decomposition, canonicity, 4 KiB/2 MiB/1 GiB translation and the not-present level behave as asserted against a synthetic page table | That the real `CR3`/bootloader tables look like the fixture, or that mapping/modification works |
 | `cargo build -p boot-image` | The kernel compiles for its target and the boot images can be generated | That the images boot |
-| `tools/test/qemu-smoke.sh bios\|uefi` | The generated image boots and the **guest kernel** prints `NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_TIMER_OK`, `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on its own COM1 serial path, in that order — so the exception, timer and memory paths cannot stop running without a failure | Physical hardware, other devices, virtual memory, the task/process model, userspace, or any desktop/Windows-compatibility feature |
+| `tools/test/qemu-smoke.sh bios\|uefi` | The generated image boots and the **guest kernel** prints `NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_TIMER_OK`, `NEW_OS_KERNEL_PAGING_OK`, `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on its own COM1 serial path, in that order — so the exception, timer, translation and memory paths cannot stop running without a failure | Physical hardware, other devices, our own page tables, the task/process model, userspace, or any desktop/Windows-compatibility feature |
 
 ## Boot smoke test requirements
 
@@ -79,7 +81,9 @@ reservation, bitmap-overflow reporting, non-usable claims overriding usable ones
 and exhaustion, call-order enforcement, and rejected calls leaving state unchanged. `crates/x86exc`
 (10 tests) covers the exception vector names and reserved/unknown handling, the error-code table,
 the IDT gate bit layout including IST and DPL, the `GDTR`/`IDTR` pointer size and layout, and
-page-fault error-code decoding and display.
+page-fault error-code decoding and display. `crates/x86paging` (8 tests) covers virtual-address
+index decomposition, canonicity, translation of 4 KiB, 2 MiB and 1 GiB mappings, the specific level
+that is not present, and the ignoring of non-address flag bits.
 
 Register-level I/O, the kernel entry path, the print/parsing wiring, the panic path and the halt
 loop are **not** unit tested; they are exercised by the QEMU boot test. No test was added purely to

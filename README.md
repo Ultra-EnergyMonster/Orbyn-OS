@@ -17,7 +17,8 @@ what has been observed.
 | M2 boot memory map + physical frame allocator | Implemented; unit tested (21 tests); **QEMU boot tested (BIOS and UEFI)**; no virtual memory, no deallocation |
 | M2 exception reporting + controlled fatal handling | Implemented; unit tested (10 tests for the encoding/decoding); **QEMU boot tested (BIOS and UEFI)** with a real breakpoint trap and a real, resumed page fault |
 | M3 PIT timer interrupt source | Implemented; **QEMU boot tested (BIOS and UEFI)** with real IRQ0 interrupts observed |
-| Kernel virtual memory/page tables, APIC, scheduling | Not started (rest of M2, M3) |
+| M2 address translation (over the bootloader's page tables) | Implemented; unit tested (8 tests for the walker); **QEMU boot tested (BIOS and UEFI)** — kernel stack and framebuffer frames now reserved by translation |
+| Kernel page tables of our own, APIC, scheduling | Not started (rest of M2, M3) |
 | Drivers beyond the debug UART | Not started (M4) |
 | Userspace, filesystem, packages | Not started (M5/M6) |
 | Desktop, file manager, settings | Not started (M7) |
@@ -27,9 +28,11 @@ The prototype is deliberately tiny: firmware hands control to the reused `bootlo
 which loads our kernel ELF and jumps to our `_start`/`kernel_main`. The kernel initialises COM1, installs
 its own GDT, TSS (with a double-fault IST stack) and 256-entry IDT, proves that path with a real
 breakpoint trap and a deliberately faulted, resumed page fault (`NEW_OS_KERNEL_EXCEPTION_OK`), starts
-the PIT timer at 100 Hz and waits for real IRQ0 interrupts (`NEW_OS_KERNEL_TIMER_OK`), prints a summary
-of the boot handoff, validates the firmware memory map, builds a bitmap physical frame allocator from
-the usable regions (reserving the first MiB and its own image), takes a small bootstrap allocation,
+the PIT timer at 100 Hz and waits for real IRQ0 interrupts (`NEW_OS_KERNEL_TIMER_OK`), translates the
+virtual addresses `BootInfo` reports for its stack and the framebuffer by walking the installed page
+tables and reserves their frames (`NEW_OS_KERNEL_PAGING_OK`), prints a summary of the boot handoff,
+validates the firmware memory map, builds a bitmap physical frame allocator from the usable regions
+(reserving the first MiB and its own image), takes a small bootstrap allocation,
 prints `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on the serial console, and halts. It
 does **not** create page tables of its own, use the APIC, schedule tasks or run userspace, and the
 frames it hands out are not mapped to anything yet.
@@ -46,6 +49,7 @@ does need administrator rights on the host.
 cargo test -p uart16550
 cargo test -p physmem
 cargo test -p x86exc
+cargo test -p x86paging
 
 # 3. Build the kernel and generate bootable images under build/boot/:
 cargo build -p boot-image
@@ -80,6 +84,7 @@ kernel/                 our kernel: entry point, serial diagnostics, boot memory
 crates/uart16550/       polled 16550 UART driver used by the kernel for diagnostics
 crates/physmem/         boot memory-map validation and bitmap physical frame allocator (host-tested)
 crates/x86exc/          exception vectors, IDT/TSS descriptor encoding and page-fault decoding (host-tested)
+crates/x86paging/       virtual-address decomposition and 4-level address translation (host-tested)
 boot/image/             builds BIOS and UEFI disk images from the kernel ELF
 tools/test/qemu-smoke.sh bounded QEMU boot smoke test against a generated image
 build/                  generated images and test logs (gitignored, never committed)

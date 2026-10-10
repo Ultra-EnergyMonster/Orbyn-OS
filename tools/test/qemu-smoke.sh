@@ -3,11 +3,13 @@
 # Bounded QEMU boot smoke test for the New OS kernel prototype (milestones 1 and 2).
 #
 # Boots a generated disk image, captures the *guest kernel's* COM1 serial output to a log file, and
-# fails unless all four success markers appear, in the order the kernel is supposed to emit them:
+# fails unless all five success markers appear, in the order the kernel is supposed to emit them:
 #
 #   NEW_OS_KERNEL_EXCEPTION_OK  the exception tables were installed and both exception self-tests
 #                               (a real breakpoint trap and a real, resumed page fault) passed
 #   NEW_OS_KERNEL_TIMER_OK      the PIT timer was started and was observed to interrupt the CPU
+#   NEW_OS_KERNEL_PAGING_OK     the kernel stack and framebuffer virtual addresses were translated by
+#                               our own page-table walk and their physical frames reserved
 #   NEW_OS_KERNEL_MEMORY_OK     the memory map was validated and the frame allocator was built and used
 #   NEW_OS_KERNEL_BOOT_OK       the whole initialisation path succeeded
 #
@@ -30,6 +32,7 @@ set -euo pipefail
 
 readonly EXCEPTION_MARKER="NEW_OS_KERNEL_EXCEPTION_OK"
 readonly TIMER_MARKER="NEW_OS_KERNEL_TIMER_OK"
+readonly PAGING_MARKER="NEW_OS_KERNEL_PAGING_OK"
 readonly MEMORY_MARKER="NEW_OS_KERNEL_MEMORY_OK"
 readonly BOOT_MARKER="NEW_OS_KERNEL_BOOT_OK"
 readonly MODE="${1:-bios}"
@@ -111,6 +114,7 @@ deadline=$((SECONDS + QEMU_TIMEOUT))
 while ((SECONDS < deadline)); do
     grep -q -F "$EXCEPTION_MARKER" "$serial_log" 2>/dev/null &&
         grep -q -F "$TIMER_MARKER" "$serial_log" 2>/dev/null &&
+        grep -q -F "$PAGING_MARKER" "$serial_log" 2>/dev/null &&
         grep -q -F "$MEMORY_MARKER" "$serial_log" 2>/dev/null &&
         grep -q -F "$BOOT_MARKER" "$serial_log" 2>/dev/null && break
     # Stop waiting early if QEMU died on its own (for example a firmware or image error).
@@ -129,6 +133,7 @@ echo "--- end guest serial output ---"
 missing=""
 grep -q -F "$EXCEPTION_MARKER" "$serial_log" 2>/dev/null || missing="$missing $EXCEPTION_MARKER"
 grep -q -F "$TIMER_MARKER" "$serial_log" 2>/dev/null || missing="$missing $TIMER_MARKER"
+grep -q -F "$PAGING_MARKER" "$serial_log" 2>/dev/null || missing="$missing $PAGING_MARKER"
 grep -q -F "$MEMORY_MARKER" "$serial_log" 2>/dev/null || missing="$missing $MEMORY_MARKER"
 grep -q -F "$BOOT_MARKER" "$serial_log" 2>/dev/null || missing="$missing $BOOT_MARKER"
 if [ -n "$missing" ]; then
@@ -142,11 +147,12 @@ fi
 # or shortened in a way the test must not accept.
 exception_line="$(grep -n -m 1 -F "$EXCEPTION_MARKER" "$serial_log" | cut -d: -f1)"
 timer_line="$(grep -n -m 1 -F "$TIMER_MARKER" "$serial_log" | cut -d: -f1)"
+paging_line="$(grep -n -m 1 -F "$PAGING_MARKER" "$serial_log" | cut -d: -f1)"
 memory_line="$(grep -n -m 1 -F "$MEMORY_MARKER" "$serial_log" | cut -d: -f1)"
 boot_line="$(grep -n -m 1 -F "$BOOT_MARKER" "$serial_log" | cut -d: -f1)"
-if ((exception_line >= timer_line || timer_line >= memory_line || memory_line >= boot_line)); then
-    fail "guest kernel emitted its markers out of order: $EXCEPTION_MARKER (line $exception_line), $TIMER_MARKER (line $timer_line), $MEMORY_MARKER (line $memory_line), $BOOT_MARKER (line $boot_line); the initialisation path did not run in order"
+if ((exception_line >= timer_line || timer_line >= paging_line || paging_line >= memory_line || memory_line >= boot_line)); then
+    fail "guest kernel emitted its markers out of order: $EXCEPTION_MARKER (line $exception_line), $TIMER_MARKER (line $timer_line), $PAGING_MARKER (line $paging_line), $MEMORY_MARKER (line $memory_line), $BOOT_MARKER (line $boot_line); the initialisation path did not run in order"
 fi
 
-echo "PASS: guest kernel emitted $EXCEPTION_MARKER (line $exception_line), $TIMER_MARKER (line $timer_line), $MEMORY_MARKER (line $memory_line) then $BOOT_MARKER (line $boot_line) (mode=$MODE, qemu=$("$QEMU_BIN" --version | head -n 1), accel=$QEMU_ACCEL)"
+echo "PASS: guest kernel emitted $EXCEPTION_MARKER (line $exception_line), $TIMER_MARKER (line $timer_line), $PAGING_MARKER (line $paging_line), $MEMORY_MARKER (line $memory_line) then $BOOT_MARKER (line $boot_line) (mode=$MODE, qemu=$("$QEMU_BIN" --version | head -n 1), accel=$QEMU_ACCEL)"
 exit 0

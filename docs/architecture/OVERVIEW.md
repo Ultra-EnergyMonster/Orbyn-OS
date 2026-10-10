@@ -1,6 +1,6 @@
 # Architecture Overview
 
-**Status:** initial design outline. Layers 1–2 are partially implemented and boot-tested at their smallest size (milestones 1–3); every other layer is planned only. ADR-0003, ADR-0004, ADR-0005, ADR-0014, ADR-0015 and ADR-0016 are now accepted on boot-experiment evidence; ADR-0002, ADR-0007 and ADR-0013 remain proposed.
+**Status:** initial design outline. Layers 1–2 are partially implemented and boot-tested at their smallest size (milestones 1–3); every other layer is planned only. ADR-0003, ADR-0004, ADR-0005, ADR-0014, ADR-0015, ADR-0016 and ADR-0017 are now accepted on boot-experiment evidence; ADR-0002, ADR-0007 and ADR-0013 remain proposed.
 
 ## Goal
 
@@ -49,6 +49,11 @@ The desktop shell's ability to associate `.exe` files is not Windows compatibili
   and PIC are ready. The handler acknowledges the PIC and counts ticks; the boot waits for real
   interrupts and asserts `NEW_OS_KERNEL_TIMER_OK`. **No scheduler, no timekeeping and no APIC** —
   nothing consumes the ticks yet.
+- Read-only address translation (`crates/x86paging` + `kernel/src/paging.rs`): the kernel walks the
+  page tables `CR3` points at, through the physical-memory mapping it asks the bootloader to create,
+  and reserves the kernel stack and framebuffer physical frames by translating their virtual
+  addresses instead of trusting the bootloader's classification. **It reads the bootloader's tables;
+  it does not own them** — no `CR3` switch, no `map`/`unmap`, no isolation.
 - Boot-time memory handling (`crates/physmem/`): the firmware memory map from `BootInfo` is validated
   with checked arithmetic and a defective map is fatal; usable regions feed a bitmap **physical frame**
   allocator (first 4 GiB, 4 KiB frames) that starts with every frame unavailable, applies every
@@ -62,9 +67,9 @@ The desktop shell's ability to associate `.exe` files is not Windows compatibili
   `docs/verification/M1-BOOT-EVIDENCE.md`, `docs/verification/M2-MEMORY-EVIDENCE.md` and
   `docs/verification/M2-EXCEPTION-EVIDENCE.md`.
 
-**Nothing else is implemented.** Specifically absent: virtual memory and page tables of our own (the
-kernel still runs on the bootloader's tables), the APIC/I/O APIC and every interrupt source other
-than the PIT timer, scheduling, threads/processes, syscalls, userspace, privilege separation, any
+**Nothing else is implemented.** Specifically absent: page tables and virtual memory of our own (the
+kernel translates through, but still runs on, the bootloader's tables), the APIC/I/O APIC and every
+interrupt source other than the PIT timer, scheduling, threads/processes, syscalls, userspace, privilege separation, any
 driver model, any storage/filesystem/network/audio/input driver, graphics or compositor, the desktop
 shell, the file manager, the package manager, the installer, and the entire Windows compatibility
 programme (PE parsing, loader, Win32 APIs). The kernel reports the framebuffer details the bootloader
