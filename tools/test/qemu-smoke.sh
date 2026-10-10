@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 #
-# Bounded QEMU boot smoke test for the New OS kernel prototype (milestone 1).
+# Bounded QEMU boot smoke test for the New OS kernel prototype (milestones 1 and 2).
 #
-# Boots a generated disk image, captures the *guest kernel's* COM1 serial output to a log file,
-# and fails unless the success marker appears. A timeout on its own is never treated as a pass.
+# Boots a generated disk image, captures the *guest kernel's* COM1 serial output to a log file, and
+# fails unless both success markers appear, in the order the kernel is supposed to emit them:
+#
+#   NEW_OS_KERNEL_MEMORY_OK   the memory map was validated and the frame allocator was built and used
+#   NEW_OS_KERNEL_BOOT_OK     the whole initialisation path succeeded
+#
+# A timeout on its own is never treated as a pass.
 #
 # Safety (AGENTS.md rule 4, docs/verification/VERIFICATION.md):
 #   The only disks QEMU touches are generated image files under build/boot/ plus a read-only copy
@@ -20,7 +25,8 @@
 
 set -euo pipefail
 
-readonly MARKER="NEW_OS_KERNEL_BOOT_OK"
+readonly MEMORY_MARKER="NEW_OS_KERNEL_MEMORY_OK"
+readonly BOOT_MARKER="NEW_OS_KERNEL_BOOT_OK"
 readonly MODE="${1:-bios}"
 readonly QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
 readonly QEMU_ACCEL="${QEMU_ACCEL:-tcg}"
@@ -98,7 +104,8 @@ trap cleanup EXIT
 
 deadline=$((SECONDS + QEMU_TIMEOUT))
 while ((SECONDS < deadline)); do
-    grep -q -F "$MARKER" "$serial_log" 2>/dev/null && break
+    grep -q -F "$MEMORY_MARKER" "$serial_log" 2>/dev/null &&
+        grep -q -F "$BOOT_MARKER" "$serial_log" 2>/dev/null && break
     # Stop waiting early if QEMU died on its own (for example a firmware or image error).
     kill -0 "$qemu_pid" 2>/dev/null || break
     sleep 0.2
@@ -111,11 +118,24 @@ echo "--- guest serial output ---"
 cat "$serial_log" 2>/dev/null || true
 echo "--- end guest serial output ---"
 
-if grep -q -F "$MARKER" "$serial_log" 2>/dev/null; then
-    echo "PASS: guest kernel emitted $MARKER (mode=$MODE, qemu=$("$QEMU_BIN" --version | head -n 1), accel=$QEMU_ACCEL)"
-    exit 0
+# Both markers are produced by the guest kernel's own serial code, so each one must be present.
+missing=""
+grep -q -F "$MEMORY_MARKER" "$serial_log" 2>/dev/null || missing="$missing $MEMORY_MARKER"
+grep -q -F "$BOOT_MARKER" "$serial_log" 2>/dev/null || missing="$missing $BOOT_MARKER"
+if [ -n "$missing" ]; then
+    echo "--- qemu output (tail) ---" >&2
+    tail -n 20 "$qemu_log" >&2 || true
+    fail "guest kernel did not emit:$missing within ${QEMU_TIMEOUT}s (mode=$MODE); see $serial_log"
 fi
 
-echo "--- qemu output (tail) ---" >&2
-tail -n 20 "$qemu_log" >&2 || true
-fail "guest kernel did not emit $MARKER within ${QEMU_TIMEOUT}s (mode=$MODE); see $serial_log"
+# Order matters: the milestone-2 memory marker is emitted from inside the initialisation path, and
+# the boot marker only afterwards. A boot marker printed first would mean the path was reordered or
+# shortened in a way the test must not accept.
+memory_line="$(grep -n -m 1 -F "$MEMORY_MARKER" "$serial_log" | cut -d: -f1)"
+boot_line="$(grep -n -m 1 -F "$BOOT_MARKER" "$serial_log" | cut -d: -f1)"
+if ((memory_line >= boot_line)); then
+    fail "guest kernel emitted $BOOT_MARKER (line $boot_line) before $MEMORY_MARKER (line $memory_line); the initialisation path did not run in order"
+fi
+
+echo "PASS: guest kernel emitted $MEMORY_MARKER (line $memory_line) then $BOOT_MARKER (line $boot_line) (mode=$MODE, qemu=$("$QEMU_BIN" --version | head -n 1), accel=$QEMU_ACCEL)"
+exit 0

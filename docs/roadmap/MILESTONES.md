@@ -2,8 +2,10 @@
 
 **Status:** M0 is in progress (its documented checks now pass from a fresh clone, but the
 unresolved licence question and a first CI run are still outstanding), M1 is verified (2026-10-10,
-QEMU boot tested), and M2 onwards are planned. Update this file only after real repository evidence
-exists; each verified claim below links to the evidence that supports it.
+QEMU boot tested), M2 is in progress (memory-map validation and bootstrap frame allocation done;
+exception handling, page tables and virtual memory are not), and M3 onwards are planned. Update this
+file only after real repository evidence exists; each verified claim below links to the evidence that
+supports it.
 
 Use a status of `PLANNED`, `IN PROGRESS`, `BLOCKED`, or `VERIFIED`. For a VERIFIED milestone, link to the commit/PR and record the exact tests and environments. A code merge alone does not prove that a feature works.
 
@@ -63,13 +65,34 @@ false — the BIOS image *is* byte-identical across regenerations), physical har
 KVM-accelerated runs, and any memory, interrupt, driver, userspace or Windows-compatibility
 capability. The CI workflow has also never executed (nothing has been pushed yet).
 
-## M2 — Boot info, memory and fault diagnostics
+## M2 — Boot info, memory and fault diagnostics — `IN PROGRESS`
 
-- [ ] Validate boot information and memory map safely.
-- [ ] Establish early physical page management and virtual memory/page tables.
-- [ ] Add exception reporting and controlled fatal handling.
-- [ ] Add tests for pure address/map logic and malformed inputs.
-- **Gate:** tests pass; faults produce useful diagnostics in QEMU; no unsupported memory-management claims.
+First slice (memory-map validation and the bootstrap physical frame allocator) is done on
+2026-10-10. Evidence: `docs/verification/M2-MEMORY-EVIDENCE.md`; decisions in ADR-0014.
+
+- [x] Validate boot information and memory map safely. — `crates/physmem::MapValidator` checks each
+      `BootInfo` region for zero length and an unrepresentable end address with checked arithmetic,
+      refuses reversed start/end pairs, sums totals with an explicit saturation flag, and makes a
+      defective map fatal with the offending region index printed before the halt.
+- [ ] Establish early physical page management and virtual memory/page tables. — **Partial.**
+      Physical frames are managed: a bitmap allocator over the first 4 GiB in 4 KiB frames, usable
+      claims first, then every non-usable claim, plus explicit reservations for the first MiB and the
+      kernel image. **No virtual memory and no page tables of our own**: the kernel still executes on
+      the tables the bootloader created, and there is no deallocation.
+- [ ] Add exception reporting and controlled fatal handling. — **Partial.** Memory-map and allocator
+      defects are reported with the offending region and take the controlled halt path; the panic
+      handler writes a diagnostic to serial first. **No IDT, no exception or fault handlers, and no
+      double-fault stack yet.**
+- [x] Add tests for pure address/map logic and malformed inputs. — 21 host tests in `crates/physmem`
+      cover zero-length regions, unrepresentable end addresses, saturating totals, reversed bounds,
+      unsupported frame sizes, partial-frame handling, bitmap-overflow reporting, non-usable claims
+      overriding usable ones, call-order enforcement and rejected calls leaving state unchanged.
+- **Gate:** tests pass; faults produce useful diagnostics in QEMU; no unsupported memory-management claims. —
+      **Not met yet.** Tests pass (21 + 5 host tests) and memory-map defects do produce useful
+      diagnostics, but **CPU faults still produce nothing**: there is no IDT or fault handler, so the
+      fault-diagnostics half of the gate is untouched. The no-unsupported-claims half is kept: the
+      boot report and the docs state explicitly that there is no virtual memory, deallocation or
+      fault handling.
 
 ## M3 — Interrupts, timers, basic task/process model
 

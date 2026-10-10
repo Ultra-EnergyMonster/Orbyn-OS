@@ -14,16 +14,20 @@ what has been observed.
 | Area | Status |
 | --- | --- |
 | M1 bootable kernel skeleton | Implemented; build verified; unit tested; **QEMU boot tested (BIOS and UEFI)** |
-| Kernel memory/paging/interrupts/scheduling | Not started (M2/M3) |
+| M2 boot memory map + physical frame allocator | Implemented; unit tested (21 tests); **QEMU boot tested (BIOS and UEFI)**; no virtual memory, no deallocation |
+| Kernel virtual memory, exceptions/faults, interrupts, scheduling | Not started (rest of M2, M3) |
 | Drivers beyond the debug UART | Not started (M4) |
 | Userspace, filesystem, packages | Not started (M5/M6) |
 | Desktop, file manager, settings | Not started (M7) |
 | Windows `.exe` recognition, PE loading, Win32 APIs | Not started (M8–M11) |
 
-The milestone-1 prototype is deliberately tiny: firmware hands control to the reused `bootloader`
-0.11 component, which loads our kernel ELF and jumps to our `_start`/`kernel_main`. The kernel then
-initialises COM1, prints a summary of the boot handoff, prints `NEW_OS_KERNEL_BOOT_OK` on the serial
-console, and halts. It does not manage memory, enable interrupts, schedule tasks or run userspace.
+The prototype is deliberately tiny: firmware hands control to the reused `bootloader` 0.11 component,
+which loads our kernel ELF and jumps to our `_start`/`kernel_main`. The kernel initialises COM1, prints
+a summary of the boot handoff, validates the firmware memory map, builds a bitmap physical frame
+allocator from the usable regions (reserving the first MiB and its own image), takes a small bootstrap
+allocation, prints `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on the serial console, and
+halts. It does **not** create page tables, enable interrupts or exceptions, schedule tasks or run
+userspace, and the frames it hands out are not mapped to anything yet.
 
 ### Building and boot-testing the prototype
 
@@ -32,10 +36,14 @@ does need administrator rights on the host.
 
 ```sh
 # 1. Toolchain: rustup installs the pinned nightly from rust-toolchain.toml automatically.
-# 2. Build the kernel and generate bootable images under build/boot/:
+# 2. Run the host unit tests (UART divisor arithmetic, memory-map validation, frame allocator):
+cargo test -p uart16550
+cargo test -p physmem
+
+# 3. Build the kernel and generate bootable images under build/boot/:
 cargo build -p boot-image
 
-# 3. Boot-test the generated image in QEMU and assert the guest kernel's serial marker:
+# 4. Boot-test the generated image in QEMU and assert the guest kernel's serial markers:
 ./tools/test/qemu-smoke.sh bios    # legacy BIOS + SeaBIOS
 ./tools/test/qemu-smoke.sh uefi    # UEFI + OVMF  (needs the 'ovmf' package)
 ```
@@ -61,8 +69,9 @@ or a check could not run, that is recorded as `NOT RUN` rather than passed.
 ## Where the code lives
 
 ```text
-kernel/                 our kernel: entry point, serial diagnostics, panic path, halt
+kernel/                 our kernel: entry point, serial diagnostics, boot memory handling, halt
 crates/uart16550/       polled 16550 UART driver used by the kernel for diagnostics
+crates/physmem/         boot memory-map validation and bitmap physical frame allocator (host-tested)
 boot/image/             builds BIOS and UEFI disk images from the kernel ELF
 tools/test/qemu-smoke.sh bounded QEMU boot smoke test against a generated image
 build/                  generated images and test logs (gitignored, never committed)

@@ -1,5 +1,11 @@
 # Milestone 1 (M1) Boot Evidence
 
+> **Scope note (added after milestone 2 started):** every serial value below was produced by the
+> *milestone-1* kernel (816,624-byte ELF). The kernel has since grown a boot memory-map validation
+> and frame-allocation path, so current boot output differs; the current evidence is
+> `docs/verification/M2-MEMORY-EVIDENCE.md`. The milestone-1 image-reproducibility claims were also
+> corrected after a counter-observation — see checks 6 and 7 below.
+
 **Date:** 2026-10-10
 **Branch:** `feat/kernel-m1-bootable-prototype`
 **Claim level:** *QEMU boot tested* for the BIOS and UEFI images (see
@@ -54,8 +60,8 @@ Every result below is observed output.
 | 3 | `head -c 3638272 /dev/zero > build/boot/bios.img && cargo build -p boot-image` | exit 0; `bios.img` regenerated to the correct sha256 |
 | 4 | kernel source changed, then `cargo build -p boot-image` | both images regenerated for the new kernel (image mtime and BIOS image sha256 both changed) |
 | 5 | kernel restored, then `cargo build -p boot-image` | BIOS image regenerated back to the original sha256 |
-| 6 | deterministic BIOS image | sha256 `27fd70d9ded3bcb502578add7f6a3a3e90ae26c851d0880470a30026b95106f4` in every independent regeneration |
-| 7 | UEFI image across independent regenerations | **not** byte-identical: sha256 differed between builds of the same kernel (`203489ee…`, `92565095…`, `9c32c866…`) |
+| 6 | BIOS image across independent regenerations | sha256 `27fd70d9ded3bcb502578add7f6a3a3e90ae26c851d0880470a30026b95106f4` in seven regenerations of this kernel |
+| 7 | UEFI image across independent regenerations | differed between builds of the same kernel (`203489ee…`, `92565095…`, `9c32c866…`) |
 | 8 | CI action pin re-checked against `https://api.github.com/repos/actions/checkout/git/ref/tags/v5` | matches the SHA used in `.github/workflows/ci.yml`: `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09` |
 
 Checks 1–5 came out of a defect found while re-verifying this milestone: `boot/image/build.rs`
@@ -67,10 +73,13 @@ the three differs from what it last wrote, so deletion recovery and "images foll
 without turning every build into a rewrite. That change is build-script logic; the kernel itself was
 not modified for it.
 
-Check 7 limits one claim: the UEFI image is reproducible in behaviour (it boots and the kernel emits
-the same marker) but not byte-for-byte. The difference is in the image's FAT/ESP metadata, not in
-kernel code, and the same kernel ELF is embedded in both images. No byte-for-byte reproducible-build
-claim is made for the UEFI image.
+**Checks 6 and 7 do not support a reproducibility claim, and the original draft of this document drew
+one too strongly.** The BIOS image was identical across the regenerations measured here, but a later
+regeneration in the same environment produced a *different* `bios.img` for the same source
+(sha256 `cd96c2e3…` once, then `94153b13…` seven times) with the cause unidentified. Byte-for-byte
+reproducibility is therefore **not established for either image**; see limitation 2 of
+`docs/verification/M2-MEMORY-EVIDENCE.md`. Both images are reproducible in *behaviour*: they boot and
+the kernel emits the same markers.
 
 ## Clean-checkout verification (2026-10-10)
 
@@ -132,9 +141,9 @@ and the handoff fields are what the test asserts on.
 - **No device support beyond the debug UART.** The framebuffer is reported from `BootInfo` but the
   kernel does not draw to it; there is no driver model, storage, input, networking or audio (M4).
 - **No Windows compatibility of any kind**, no PE parsing, no installer, no desktop, no file manager.
-- **The UEFI boot image is not byte-for-byte reproducible.** Measured: the BIOS image was identical
-  across regenerations, the UEFI image's bytes were not (see check 7 above). Behaviour is identical
-  in both cases.
+- **Neither boot image is byte-for-byte reproducible.** The BIOS image was identical across the
+  regenerations measured here, but a counter-example was observed later for the same source; see
+  checks 6 and 7 above and the correction they carry. Behaviour is identical in both cases.
 - The kernel runs with whatever page tables the `bootloader` component created. Their correctness has
   not been independently reviewed by this project.
 
@@ -146,4 +155,4 @@ and the handoff fields are what the test asserts on.
 | Kernel unit tests | NOT APPLICABLE | Bare-metal binary cannot run the host test harness. |
 | Fuzzing / untrusted input parsers | NOT RUN | No parser exists yet; starts at M9. |
 | CI execution of this workflow | NOT RUN | The workflow was authored and reviewed locally but no push/CI run has happened yet. Treating it as passing would be false. |
-| Reproducible-image comparison | MEASURED, MIXED | BIOS image byte-identical across regenerations; UEFI image not. See the re-run table above. |
+| Reproducible-image comparison | ATTEMPTED, NOT ESTABLISHED | Repeated regenerations did not consistently produce identical bytes; see checks 6 and 7 and limitation 2 of the milestone-2 evidence. |

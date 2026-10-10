@@ -1,0 +1,11 @@
+[package]
+name = "physmem"
+description = "Boot memory-map validation and a bootstrap physical frame allocator (no_std) for the New OS kernel."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

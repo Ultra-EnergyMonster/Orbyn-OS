@@ -101,12 +101,12 @@ delete anything outside `build/` or `target/` to clean up this project.
   smoke test used.
 - **Cross-host builds**: only the Ubuntu 24.04 x86-64 host above was tested. Windows or macOS hosts
   are untested.
-- **Reproducibility of the images byte-for-byte**: measured (2026-10-10) with a mixed result.
-  `build/boot/bios.img` was byte-identical across independent regenerations (sha256
-  `27fd70d9ded3bcb502578add7f6a3a3e90ae26c851d0880470a30026b95106f4` every time), but
-  `build/boot/uefi.img` was not: its bytes differed between builds of the same kernel, almost
-  certainly because the EFI system partition's FAT metadata carries host timestamps. Only the BIOS
-  image may be treated as reproducible; the UEFI image is reproducible in behaviour (it boots and
-  emits the same marker) but not in bytes. See `docs/verification/M1-BOOT-EVIDENCE.md`.
+- **Reproducibility of the images byte-for-byte**: attempted (2026-10-10) and **not established**
+  for either image. Repeated regenerations of the same kernel produced identical bytes in one
+  session, but a later regeneration in the same environment produced a different `bios.img` for the
+  same source, and the cause was not identified. The images are reproducible in behaviour (they boot
+  and emit the same markers) but must not be assumed byte-identical; see
+  `docs/verification/M1-BOOT-EVIDENCE.md` and limitation 2 of
+  `docs/verification/M2-MEMORY-EVIDENCE.md`.
 - **`cargo build --workspace`**: expected to fail for the `kernel` crate, which is a bare-metal
   binary that cannot link against the host standard library. Use the per-package commands above.

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["boot/image", "crates/uart16550", "kernel"]
+members = ["boot/image", "crates/physmem", "crates/uart16550", "kernel"]
 # `cargo build` / `cargo run` from the repository root should build the boot image, which in
 # turn builds the kernel artifact. The kernel itself cannot be built for the host toolchain.
 default-members = ["boot/image"]

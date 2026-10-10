@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 bootloader_api = "0.11.17"
+physmem = { path = "../crates/physmem" }
 uart16550 = { path = "../crates/uart16550" }
 
 [lints]
