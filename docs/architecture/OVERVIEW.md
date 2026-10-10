@@ -1,6 +1,6 @@
 # Architecture Overview
 
-**Status:** initial design outline. Layers 1–2 are partially implemented and boot-tested at their smallest size (milestones 1–3); every other layer is planned only. ADR-0003, ADR-0004, ADR-0005, ADR-0014, ADR-0015, ADR-0016 and ADR-0017 are now accepted on boot-experiment evidence; ADR-0002, ADR-0007 and ADR-0013 remain proposed.
+**Status:** initial design outline. Layers 1–2 are partially implemented and boot-tested at their smallest size (milestones 1–3); every other layer is planned only. ADR-0003, ADR-0004, ADR-0005, ADR-0014, ADR-0015, ADR-0016, ADR-0017 and ADR-0018 are now accepted on boot-experiment evidence; ADR-0002, ADR-0007 and ADR-0013 remain proposed.
 
 ## Goal
 
@@ -52,8 +52,13 @@ The desktop shell's ability to associate `.exe` files is not Windows compatibili
 - Read-only address translation (`crates/x86paging` + `kernel/src/paging.rs`): the kernel walks the
   page tables `CR3` points at, through the physical-memory mapping it asks the bootloader to create,
   and reserves the kernel stack and framebuffer physical frames by translating their virtual
-  addresses instead of trusting the bootloader's classification. **It reads the bootloader's tables;
-  it does not own them** — no `CR3` switch, no `map`/`unmap`, no isolation.
+  addresses instead of trusting the bootloader's classification.
+- **A page table of our own** (`kernel/src/paging.rs`, ADR-0018): the kernel allocates a private PML4,
+  mirrors the bootloader's 512 entries into it, builds a new `PDPT -> PD -> PT -> frame` mapping for
+  `0xFFFF_8000_0000_0000` from its own frame allocator, loads it with `mov cr3`, and reads a magic
+  value back **through the new virtual address** to prove the chain. **Only the top level is ours** —
+  the lower levels are still the bootloader's tables, and there is still no `map`/`unmap`, no frame or
+  table reclamation, no per-page protection and no per-process address space.
 - Boot-time memory handling (`crates/physmem/`): the firmware memory map from `BootInfo` is validated
   with checked arithmetic and a defective map is fatal; usable regions feed a bitmap **physical frame**
   allocator (first 4 GiB, 4 KiB frames) that starts with every frame unavailable, applies every

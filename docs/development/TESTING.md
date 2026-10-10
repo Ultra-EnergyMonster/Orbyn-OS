@@ -38,7 +38,7 @@ correctness. Tests are run per package.
 | `cargo test -p x86exc` | The exception vector metadata, the error-code table, the IDT gate bit layout, the table-pointer layout and page-fault error-code decoding behave as asserted, on the host | That the IDT is executed, that a fault is delivered, or that the assembly stubs/copies are correct |
 | `cargo test -p x86paging` | Virtual-address decomposition, canonicity, 4 KiB/2 MiB/1 GiB translation and the not-present level behave as asserted against a synthetic page table | That the real `CR3`/bootloader tables look like the fixture, or that mapping/modification works |
 | `cargo build -p boot-image` | The kernel compiles for its target and the boot images can be generated | That the images boot |
-| `tools/test/qemu-smoke.sh bios\|uefi` | The generated image boots and the **guest kernel** prints `NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_TIMER_OK`, `NEW_OS_KERNEL_PAGING_OK`, `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on its own COM1 serial path, in that order — so the exception, timer, translation and memory paths cannot stop running without a failure | Physical hardware, other devices, our own page tables, the task/process model, userspace, or any desktop/Windows-compatibility feature |
+| `tools/test/qemu-smoke.sh bios\|uefi` | The generated image boots and the **guest kernel** prints `NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_TIMER_OK`, `NEW_OS_KERNEL_PAGING_OK`, `NEW_OS_KERNEL_PAGETABLES_OK`, `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on its own COM1 serial path, in that order — so the exception, timer, translation, page-table and memory paths cannot stop running without a failure | Physical hardware, other devices, the lower levels of our page tables, `map`/`unmap`, protection or isolation, the task/process model, userspace, or any desktop/Windows-compatibility feature |
 
 ## Boot smoke test requirements
 
@@ -46,9 +46,9 @@ correctness. Tests are run per package.
 `docs/verification/VERIFICATION.md`:
 
 - the assertions are markers written by the guest kernel's own serial code, not by any host helper
-  (`NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_TIMER_OK`, `NEW_OS_KERNEL_MEMORY_OK`, then
-  `NEW_OS_KERNEL_BOOT_OK`, in that order, so the initialisation path cannot be shortened while the
-  test still passes);
+  (`NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_TIMER_OK`, `NEW_OS_KERNEL_PAGING_OK`,
+  `NEW_OS_KERNEL_PAGETABLES_OK`, `NEW_OS_KERNEL_MEMORY_OK`, then `NEW_OS_KERNEL_BOOT_OK`, in that
+  order, so the initialisation path cannot be shortened while the test still passes);
 - a timeout alone is never a pass, and a failure names exactly which marker(s) were missing;
 - the only disks QEMU receives are generated files under `build/boot/` and a read-only
   copy-on-write OVMF vars store — no physical disk, host block device, USB device or passthrough;
@@ -96,7 +96,7 @@ raise a count.
 | Kernel unit tests | NOT APPLICABLE | The kernel is a `no_main` bare-metal binary; it cannot run the host test harness. Covered by the QEMU boot test instead. |
 | Integration/fault-injection tests | NOT RUN | No filesystem or syscall boundary exists yet; the memory paths added in M2 are covered by host unit tests plus the QEMU boot test. |
 | CPU fault diagnostics (page fault, breakpoint) | DONE (2026-10-10) | Our own GDT/TSS/IDT with a shared assembly path; a real `int3` trap and a real, resumed page fault are run in the boot path and asserted by the smoke test. See `docs/verification/M2-EXCEPTION-EVIDENCE.md`. A deliberate double fault on the IST stack and `#DB` remain NOT RUN. |
-| Virtual memory and page tables of our own | NOT RUN | Not implemented; the kernel runs on the bootloader's page tables. |
+| Virtual memory and page tables of our own | PARTIAL (2026-10-11) | The kernel builds a private PML4, mirrors the bootloader's entries, adds one mapping from its own frames and installs it via `CR3`, proven by reading a magic value back through the new virtual address. The lower levels are still the bootloader's; no `map`/`unmap`, no reclamation and no protection. See `docs/verification/M2-PAGETABLES-EVIDENCE.md`. |
 | Fuzzing | NOT RUN | No untrusted-input parser exists yet. PE parsing and fuzzing are milestone M9. |
 | Physical hardware boot | NOT RUN | Out of scope for milestone 1; requires owner approval and a reviewed procedure. |
 | Memory-map validation tests | DONE (2026-10-10) | `cargo test -p physmem` plus the QEMU memory marker; see `docs/verification/M2-MEMORY-EVIDENCE.md`. |

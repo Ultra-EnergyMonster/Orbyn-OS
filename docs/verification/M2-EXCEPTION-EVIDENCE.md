@@ -1,11 +1,11 @@
 # Milestone 2 Exception Evidence (exception reporting and controlled fatal handling)
 
-> **Scope note (added after the timer and address-translation slices):** the kernel now also starts a
-> PIT timer and translates its stack/framebuffer addresses after the exception self-tests, and
-> `tools/test/qemu-smoke.sh` asserts two further markers (`NEW_OS_KERNEL_TIMER_OK`, then
-> `NEW_OS_KERNEL_PAGING_OK`) between the exception marker and the memory marker described here. The
-> exception evidence below is unchanged; the current boot evidence is
-> `docs/verification/M2-PAGING-EVIDENCE.md`.
+> **Scope note (added after the later slices):** the kernel now also starts a PIT timer, translates
+> its stack/framebuffer addresses, and builds and installs its own top-level page table after the
+> exception self-tests, and `tools/test/qemu-smoke.sh` asserts three further markers
+> (`NEW_OS_KERNEL_TIMER_OK`, then `NEW_OS_KERNEL_PAGING_OK`, then `NEW_OS_KERNEL_PAGETABLES_OK`)
+> between the exception marker and the memory marker described here. The exception evidence below is
+> unchanged; the current boot evidence is `docs/verification/M2-PAGETABLES-EVIDENCE.md`.
 
 **Date:** 2026-10-10
 **Branch:** `feat/m2-exception-handling` (stacked on the milestone-2 memory branch, still unpushed)

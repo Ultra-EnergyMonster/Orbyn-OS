@@ -9,12 +9,17 @@
 //! piece: it walks the page tables `CR3` points at, using the physical-memory mapping the bootloader
 //! exposes, so the kernel can translate those virtual addresses itself.
 //!
+//! [`install_own_page_tables`] then builds the kernel's **own** top-level page table: a private PML4
+//! with every one of the bootloader's mappings copied in, plus one new mapping built from frames the
+//! kernel allocated, installed by loading `CR3`. After that call the kernel runs on a table it owns.
+//!
 //! # What this does NOT do
 //!
-//! It only reads. The kernel still runs on the page tables the bootloader created: this module does
-//! **not** allocate, create, modify or install page tables, does not switch `CR3`, and does not
-//! provide an address space, `map`/`unmap`, or protection. Owning our own page tables is the next
-//! step in this milestone and is not claimed here.
+//! The four lower levels behind the mirrored entries are still the bootloader's tables, so there is
+//! still no address space of our own, no `map`/`unmap` of arbitrary ranges, and no protection or
+//! isolation: every mapped page stays writable and user-accessible exactly as the bootloader left
+//! it. There is no frame reclamation either, so frames allocated for page tables are never freed.
+//! Replacing the bootloader's mappings outright is later work and is not claimed here.
 
 use bootloader_api::BootInfo;
 use core::arch::asm;
@@ -25,14 +30,20 @@ use x86paging::{ENTRY_ADDRESS_MASK, TranslateError};
 
 use crate::write_line;
 
-/// Why a translation failed, including the case the `x86paging` walk cannot know about.
+/// Why a translation or page-table operation failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
     /// The bootloader did not expose a physical-memory mapping, so paging-structure entries cannot
-    /// be read at all.
+    /// be read or written at all.
     NoPhysicalMemoryOffset,
     /// The page-table walk itself failed.
     Walk(TranslateError),
+    /// The frame allocator had no free frame for a page table or the mapped frame.
+    OutOfFrames,
+    /// Every candidate top-level slot was already occupied by the bootloader's tables.
+    NoFreeTableSlot,
+    /// The new tables were installed but reading back through them did not return what was written.
+    VerificationFailed,
 }
 
 impl fmt::Display for Failure {
@@ -42,8 +53,22 @@ impl fmt::Display for Failure {
                 write!(f, "the bootloader exposed no physical-memory offset")
             }
             Failure::Walk(err) => write!(f, "{err}"),
+            Failure::OutOfFrames => write!(f, "the frame allocator had no free frame"),
+            Failure::NoFreeTableSlot => write!(f, "no free top-level page-table slot"),
+            Failure::VerificationFailed => {
+                write!(f, "the installed page tables did not read back as written")
+            }
         }
     }
+}
+
+/// The physical-memory offset, or the failure that explains why translation is impossible.
+fn physical_memory_offset(boot_info: &BootInfo) -> Result<u64, Failure> {
+    boot_info
+        .physical_memory_offset
+        .as_ref()
+        .copied()
+        .ok_or(Failure::NoPhysicalMemoryOffset)
 }
 
 /// Reads `CR3`, the physical address of the active PML4 (page-map level 4) table.
@@ -59,15 +84,118 @@ fn read_cr3() -> u64 {
 
 /// Translates `virt` to a physical address using the currently installed page tables.
 pub fn translate(boot_info: &BootInfo, virt: u64) -> Result<u64, Failure> {
-    let offset = match boot_info.physical_memory_offset.as_ref().copied() {
-        Some(offset) => offset,
-        None => return Err(Failure::NoPhysicalMemoryOffset),
-    };
+    let offset = physical_memory_offset(boot_info)?;
     // CR3's low bits are flags, and bits 52..63 are reserved in 4-level paging, so masking with the
     // entry address mask leaves the PML4 base.
     let pml4 = read_cr3() & ENTRY_ADDRESS_MASK;
     x86paging::translate(pml4, virt, |physical| read_physical(offset, physical))
         .map_err(Failure::Walk)
+}
+
+/// Writes the 8-byte value at physical address `physical` through the bootloader's mapping.
+fn write_physical(offset: u64, physical: u64, value: u64) {
+    // SAFETY: as for `read_physical`, `physical` is a real paging-structure or frame address inside
+    // RAM, which the bootloader maps at `offset`; the write is an unaligned-safe 8-byte store.
+    unsafe { core::ptr::write_unaligned((offset + physical) as *mut u64, value) }
+}
+
+/// Loads `pml4` into `CR3`, which also flushes the non-global TLB entries.
+fn write_cr3(pml4: u64) {
+    // SAFETY: loading `CR3` is a privileged control-register write with no memory operand. `pml4` is
+    // a 4 KiB-aligned frame holding a complete copy of the bootloader's top-level table, so the
+    // address space is unchanged by the switch.
+    unsafe {
+        asm!("mov cr3, {value}", value = in(reg) pml4, options(nostack, preserves_flags));
+    }
+}
+
+/// Virtual address of the kernel's first own mapping: PML4 slot 256 with the other indices zero.
+const KERNEL_MAPPING_VIRTUAL: u64 = 0xFFFF_8000_0000_0000;
+
+/// A value written to a frame and read back through [`KERNEL_MAPPING_VIRTUAL`] to prove the mapping.
+const KERNEL_MAPPING_MAGIC: u64 = 0xC0FF_EE00_1234_5678;
+
+/// The first free top-level slot to grow the address space into.
+///
+/// The bootloader places its mappings in the lower half (kernel image, stack, framebuffer, physical
+/// memory), so the kernel builds its own mappings from slot 256 upward.
+const FIRST_KERNEL_TABLE_SLOT: u64 = 256;
+
+/// Builds the kernel's own page tables: a private PML4 mirroring the bootloader's entries, plus one
+/// newly mapped frame, then installs them by loading `CR3`.
+///
+/// This is the point at which the kernel owns its top-level page table instead of running on the
+/// one the bootloader created. The lower-level tables behind the mirrored entries are still the
+/// bootloader's, so the address space is preserved; the new mapping is built entirely from frames
+/// this kernel allocated.
+///
+/// Returns `Err` with the reason rather than faulting or pretending: the caller decides what to do.
+pub fn install_own_page_tables(
+    console: &mut SerialPort,
+    allocator: &mut FrameAllocator<'_>,
+    boot_info: &BootInfo,
+) -> Result<(), Failure> {
+    let offset = physical_memory_offset(boot_info)?;
+    let current_pml4 = read_cr3() & ENTRY_ADDRESS_MASK;
+
+    // A private top-level table with every existing mapping copied in. Mirrored entries keep
+    // pointing at the bootloader's lower-level tables, so nothing that already worked stops working.
+    let new_pml4 = allocator.allocate().ok_or(Failure::OutOfFrames)?;
+    for index in 0..512_u64 {
+        let entry = read_physical(offset, current_pml4 + index * 8);
+        write_physical(offset, new_pml4 + index * 8, entry);
+    }
+
+    // Find a free top-level slot for the kernel's own mappings.
+    let slot = (FIRST_KERNEL_TABLE_SLOT..512)
+        .find(|index| read_physical(offset, new_pml4 + index * 8) == 0)
+        .ok_or(Failure::NoFreeTableSlot)?;
+
+    // Allocate and zero the three new levels and the frame they will map. Fresh frames are not
+    // guaranteed zeroed (they hold whatever firmware left behind), so they must be cleared.
+    let pdpt = allocator.allocate().ok_or(Failure::OutOfFrames)?;
+    let pd = allocator.allocate().ok_or(Failure::OutOfFrames)?;
+    let pt = allocator.allocate().ok_or(Failure::OutOfFrames)?;
+    let mapped = allocator.allocate().ok_or(Failure::OutOfFrames)?;
+    for table in [pdpt, pd, pt] {
+        for index in 0..512_u64 {
+            write_physical(offset, table + index * 8, 0);
+        }
+    }
+
+    let flags = x86paging::ENTRY_PRESENT | x86paging::ENTRY_WRITABLE;
+    write_physical(offset, new_pml4 + slot * 8, pdpt | flags);
+    write_physical(offset, pdpt, pd | flags);
+    write_physical(offset, pd, pt | flags);
+    write_physical(offset, pt, mapped | flags);
+
+    // Put a known value in the frame we are about to map.
+    write_physical(offset, mapped, KERNEL_MAPPING_MAGIC);
+
+    // Install the new top-level table and confirm the hardware accepted it.
+    write_cr3(new_pml4);
+    if read_cr3() & ENTRY_ADDRESS_MASK != new_pml4 {
+        return Err(Failure::VerificationFailed);
+    }
+
+    // SAFETY: the address is canonical and is mapped by the table just installed (top slot `slot` ->
+    // `pdpt` -> `pd` -> `pt` -> the frame holding the magic), so the read touches RAM this kernel
+    // allocated and owns.
+    let observed = unsafe { core::ptr::read_unaligned(KERNEL_MAPPING_VIRTUAL as *const u64) };
+    if observed != KERNEL_MAPPING_MAGIC {
+        return Err(Failure::VerificationFailed);
+    }
+
+    // The bootloader's mappings must have survived the switch, so re-translate the kernel stack.
+    translate(boot_info, boot_info.kernel_stack_bottom)?;
+
+    write_line(
+        console,
+        format_args!(
+            "  page tables: own PML4 at physical {new_pml4:#018x}; slot {slot} maps {KERNEL_MAPPING_VIRTUAL:#018x} -> physical {mapped:#018x} (read back {observed:#018x})"
+        ),
+    );
+    Ok(())
 }
 
 /// Reads the 8-byte paging-structure entry at physical address `physical`.

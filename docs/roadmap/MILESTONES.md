@@ -3,8 +3,9 @@
 **Status:** M0 is in progress (its documented checks now pass from a fresh clone and the first CI run
 has since passed, but the unresolved licence question is still outstanding), M1 is verified (2026-10-10,
 QEMU boot tested), M2 is in progress (memory-map validation, bootstrap frame allocation, exception reporting/controlled
-fatal handling and read-only address translation are done; our own page tables and virtual memory are
-not), M3 is in progress (a PIT timer interrupt source is done; synchronisation primitives and the task/process model
+fatal handling, read-only address translation and the kernel's own top-level page table are done;
+the lower page-table levels, `map`/`unmap`, protection and deallocation are not), M3 is in progress
+(a PIT timer interrupt source is done; synchronisation primitives and the task/process model
 are not), and M4 onwards are planned. Update this file only after real repository evidence exists; each verified claim below
 links to the evidence that supports it.
 
@@ -70,11 +71,17 @@ capability. The CI workflow has since run and passed on a tree that contains thi
 
 ## M2 — Boot info, memory and fault diagnostics — `IN PROGRESS`
 
-Two slices are done on 2026-10-10: (1) memory-map validation and the bootstrap physical frame
-allocator, evidence in `docs/verification/M2-MEMORY-EVIDENCE.md`, decisions in ADR-0014; and
-(2) exception reporting and controlled fatal handling (our own GDT, TSS with a double-fault IST stack
-and IDT, plus two in-boot fault self-tests), evidence in `docs/verification/M2-EXCEPTION-EVIDENCE.md`,
-decisions in ADR-0015.
+Four slices are done: (1) memory-map validation and the bootstrap physical frame allocator
+(2026-10-10), evidence in `docs/verification/M2-MEMORY-EVIDENCE.md`, decisions in ADR-0014;
+(2) exception reporting and controlled fatal handling — our own GDT, TSS with a double-fault IST stack
+and IDT, plus two in-boot fault self-tests (2026-10-10), evidence in
+`docs/verification/M2-EXCEPTION-EVIDENCE.md`, decisions in ADR-0015;
+(3) read-only address translation and stack/framebuffer frame reservation by translation
+(2026-10-10), evidence in `docs/verification/M2-PAGING-EVIDENCE.md`, decisions in ADR-0017; and
+(4) the kernel's own top-level page table — a private PML4 mirroring the bootloader's entries, one new
+mapping built from its own frames, installed with `mov cr3` and read back through the new virtual
+address (2026-10-11), evidence in `docs/verification/M2-PAGETABLES-EVIDENCE.md`, decisions in
+ADR-0018.
 
 - [x] Validate boot information and memory map safely. — `crates/physmem::MapValidator` checks each
       `BootInfo` region for zero length and an unrepresentable end address with checked arithmetic,
@@ -86,8 +93,12 @@ decisions in ADR-0015.
       kernel image. Read-only **address translation** now works: the kernel walks the page tables
       `CR3` points at (host-tested `crates/x86paging`) and reserves the kernel stack and framebuffer
       frames by translating their virtual addresses, instead of trusting the bootloader's classification.
-      **Still no page tables of our own**: the kernel executes on the bootloader's tables, `CR3` is
-      never written, and there is no `map`/`unmap`, no deallocation and no isolation.
+      The kernel now also **owns its top-level page table**: it allocates a private PML4, mirrors the
+      bootloader's 512 entries into it, builds one new mapping from its own frames, installs it with
+      `mov cr3` and verifies it by reading a magic value back through the new virtual address.
+      **Still partial**: only the top level is ours — the lower levels are the bootloader's, and there
+      is no `map`/`unmap` of arbitrary ranges, no page-table or frame reclamation, no per-page
+      protection and no per-process address space.
 - [x] Add exception reporting and controlled fatal handling. — Our own GDT, a TSS whose `IST[1]`
       points at a dedicated 16 KiB stack, and a 256-entry IDT; one shared assembly path saves every
       register and calls a Rust dispatcher that reports the exception, its decoded error code, `cr2`

@@ -16,13 +16,17 @@
 //! and a real, resumed page fault, then starts the PIT timer and proves it delivers IRQ0 interrupts,
 //! then reports a summary of what the bootloader handed over, validates the reported memory map with
 //! checked arithmetic (see [`report_memory_map`]), builds a bitmap physical frame allocator over
-//! validated usable regions, takes a small bootstrap allocation from it, prints
+//! validated usable regions, takes a small bootstrap allocation from it, builds the kernel's **own**
+//! top-level page table (a private PML4 mirroring the bootloader's entries plus one new mapping from
+//! its own frames) and installs it by loading `CR3` (see [`paging::install_own_page_tables`]), prints
 //! `NEW_OS_KERNEL_MEMORY_OK`, prints `NEW_OS_KERNEL_BOOT_OK`, then halts the CPU.
 //!
 //! # What this code does NOT do
 //!
-//! No virtual memory of our own: the kernel still runs on the page tables the `bootloader`
-//! component created, and nothing here maps, unmaps or protects anything. Interrupts exist, but only
+//! The kernel owns only the **top level** of its page tables: the lower levels behind the mirrored
+//! entries are still the `bootloader` component's, so nothing here maps an arbitrary range, unmaps,
+//! reclaims frames or applies per-page protection (every mapping stays writable and user-accessible
+//! as the bootloader left it). Interrupts exist, but only
 //! the legacy PIC/PIT timer is enabled and nothing consumes its ticks: there is **no scheduler**, no
 //! task or process model, and every other interrupt line stays masked. No userspace or syscalls, no
 //! drivers beyond the debug UART, no filesystem, no graphics output, no desktop and no Windows
@@ -100,6 +104,13 @@ const TIMER_SELF_TEST_TICKS: u64 = 3;
 ///
 /// Also asserted by `tools/test/qemu-smoke.sh`, so the translation cannot silently stop working.
 const PAGING_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_PAGING_OK";
+
+/// Printed once the kernel has built a top-level page table of its own, added a mapping to it from
+/// freshly allocated frames, and installed it by loading `CR3`.
+///
+/// Also asserted by `tools/test/qemu-smoke.sh`, so the kernel cannot silently fall back to running
+/// on the bootloader's table.
+const PAGE_TABLES_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_PAGETABLES_OK";
 
 /// Physical address space the frame bitmap describes: the first 4 GiB.
 ///
@@ -234,6 +245,19 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     };
     report_frame_allocator(&mut console, &summary, &allocator, &totals);
     allocate_bootstrap_frames(&mut console, &mut allocator);
+
+    // Build our own page tables and run on them. A failure here leaves the kernel running on the
+    // bootloader's table, so it is reported but not fatal; the smoke test still fails, because the
+    // marker below is only emitted on success.
+    match paging::install_own_page_tables(&mut console, &mut allocator, boot_info) {
+        Ok(()) => write_marker(&mut console, PAGE_TABLES_SUCCESS_MARKER),
+        Err(reason) => write_line(
+            &mut console,
+            format_args!(
+                "[FAILURE] could not install the kernel's own page tables: {reason}; still running on the bootloader's tables"
+            ),
+        ),
+    }
 
     write_marker(&mut console, MEMORY_SUCCESS_MARKER);
     write_marker(&mut console, BOOT_SUCCESS_MARKER);

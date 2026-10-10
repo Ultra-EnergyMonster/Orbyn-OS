@@ -18,7 +18,8 @@ what has been observed.
 | M2 exception reporting + controlled fatal handling | Implemented; unit tested (10 tests for the encoding/decoding); **QEMU boot tested (BIOS and UEFI)** with a real breakpoint trap and a real, resumed page fault |
 | M3 PIT timer interrupt source | Implemented; **QEMU boot tested (BIOS and UEFI)** with real IRQ0 interrupts observed |
 | M2 address translation (over the bootloader's page tables) | Implemented; unit tested (8 tests for the walker); **QEMU boot tested (BIOS and UEFI)** — kernel stack and framebuffer frames now reserved by translation |
-| Kernel page tables of our own, APIC, scheduling | Not started (rest of M2, M3) |
+| M2 kernel page table of our own (PML4 built and installed via `CR3`) | Implemented; **QEMU boot tested (BIOS and UEFI)** with the new mapping read back through `0xffff800000000000`; lower-level tables are still the bootloader's |
+| `map`/`unmap`, page-table reclamation, per-page protection, APIC, scheduling | Not started (rest of M2, M3) |
 | Drivers beyond the debug UART | Not started (M4) |
 | Userspace, filesystem, packages | Not started (M5/M6) |
 | Desktop, file manager, settings | Not started (M7) |
@@ -32,10 +33,13 @@ the PIT timer at 100 Hz and waits for real IRQ0 interrupts (`NEW_OS_KERNEL_TIMER
 virtual addresses `BootInfo` reports for its stack and the framebuffer by walking the installed page
 tables and reserves their frames (`NEW_OS_KERNEL_PAGING_OK`), prints a summary of the boot handoff,
 validates the firmware memory map, builds a bitmap physical frame allocator from the usable regions
-(reserving the first MiB and its own image), takes a small bootstrap allocation,
-prints `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on the serial console, and halts. It
-does **not** create page tables of its own, use the APIC, schedule tasks or run userspace, and the
-frames it hands out are not mapped to anything yet.
+(reserving the first MiB and its own image), takes a small bootstrap allocation, then builds its
+**own** top-level page table — a private PML4 mirroring the bootloader's entries plus one new mapping
+built from its own frames — installs it with `mov cr3`, and reads a magic value back through the new
+virtual address `0xffff800000000000` (`NEW_OS_KERNEL_PAGETABLES_OK`), prints
+`NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on the serial console, and halts. It owns
+only the **top level** of its tables (the lower levels are still the bootloader's), and it does
+**not** map arbitrary ranges, unmap, reclaim frames, use the APIC, schedule tasks or run userspace.
 
 ### Building and boot-testing the prototype
 
@@ -85,6 +89,7 @@ crates/uart16550/       polled 16550 UART driver used by the kernel for diagnost
 crates/physmem/         boot memory-map validation and bitmap physical frame allocator (host-tested)
 crates/x86exc/          exception vectors, IDT/TSS descriptor encoding and page-fault decoding (host-tested)
 crates/x86paging/       virtual-address decomposition and 4-level address translation (host-tested)
+kernel/src/paging.rs    translation + the kernel's own PML4 build/installation
 boot/image/             builds BIOS and UEFI disk images from the kernel ELF
 tools/test/qemu-smoke.sh bounded QEMU boot smoke test against a generated image
 build/                  generated images and test logs (gitignored, never committed)

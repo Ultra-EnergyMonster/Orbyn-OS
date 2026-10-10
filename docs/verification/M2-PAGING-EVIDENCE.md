@@ -1,5 +1,12 @@
 # Milestone 2 Paging Evidence (address translation, stack/framebuffer reservation)
 
+> **Scope note (added after the page-table slice):** the kernel now goes further than the read-only
+> walk described here — it allocates a private PML4, mirrors the bootloader's entries, adds one new
+> mapping from its own frames and installs it with `mov cr3`, and `tools/test/qemu-smoke.sh` asserts
+> one further marker (`NEW_OS_KERNEL_PAGETABLES_OK`) between `NEW_OS_KERNEL_PAGING_OK` and
+> `NEW_OS_KERNEL_MEMORY_OK`. The evidence below is unchanged; the current boot evidence is
+> `docs/verification/M2-PAGETABLES-EVIDENCE.md`.
+
 **Date:** 2026-10-10
 **Branch:** `feat/m2-address-translation`
 **Claim level:** *QEMU boot tested* for read-only address translation over the installed page tables

@@ -3,8 +3,10 @@
 > **Scope note (added after the exception slice):** every serial value below was produced by the
 > memory-slice kernel, before exception handling existed. The kernel now installs its own GDT/TSS/IDT
 > and runs two fault self-tests before the memory work, and `tools/test/qemu-smoke.sh` asserts a third
-> marker (`NEW_OS_KERNEL_EXCEPTION_OK`) *before* the two markers described here. The current boot
-> evidence is `docs/verification/M2-EXCEPTION-EVIDENCE.md`.
+> marker (`NEW_OS_KERNEL_EXCEPTION_OK`) *before* the two markers described here, and, after the
+> address-translation and page-table slices, three more — `NEW_OS_KERNEL_TIMER_OK`,
+> `NEW_OS_KERNEL_PAGING_OK` and `NEW_OS_KERNEL_PAGETABLES_OK` — all of which now run before the memory
+> marker. The current boot evidence is `docs/verification/M2-PAGETABLES-EVIDENCE.md`.
 >
 > **Scope note 2 (added after the address-translation slice):** limitation 1 below — the kernel stack
 > and framebuffer not being reservable by address — is now **addressed**: the kernel translates their
