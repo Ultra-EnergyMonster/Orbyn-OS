@@ -42,6 +42,57 @@
 - Programs that assume Windows kernel behaviour or load vulnerable drivers.
 - Compatibility layers exposing undocumented services or unsafe handles.
 
+## Current stage: milestone 1 (boot prototype, 2026-10-10)
+
+What is present, and what is deliberately absent, in the only currently implemented stage:
+
+- **Present:** a `no_std` kernel with a single entry path, a diagnostic serial console, a controlled
+  panic-and-halt path, and bounded serial polling so faulty hardware cannot hang the kernel. Test
+  images are generated files only; the smoke test never attaches a physical disk or host boot device.
+  The toolchain is date-pinned and dependencies are pinned exactly (`bootloader` 0.11.17).
+- **Absent (so no protection is claimed):** any memory protection of our own, privilege separation,
+  userspace, syscalls, capability/permission model, sandboxing, signed/verified boot, secure update,
+  recovery, networking, or untrusted-input parsing.
+- **Attacker-relevant surface at this stage:** the firmware/bootloader handoff. `BootInfo`
+  (memory map, framebuffer, RSDP) is untrusted input that milestone 1 merely *prints* — it is not
+  validated or used, so an incorrect map currently has no consequence beyond misleading output, and
+  milestone 2 must treat it as hostile. The reused `bootloader` component is third-party code
+  (experimental upstream) pinned at one exact version and treated as an external ABI we do not
+  control.
+- **Host safety:** this stage writes only files under the repository's gitignored `build/` directory
+  and reads system firmware read-only. It does not modify host boot configuration, write physical
+  disks, load kernel modules or run downloaded binaries.
+- **Not a security claim:** none of the above means the prototype is secure. It has no independent
+  review, no adversarial testing and no threat coverage beyond the notes here.
+
+## Current stage: milestone 2, first memory slice (2026-10-10)
+
+What changed since the milestone-1 notes above, and what still is not protected:
+
+- **Present:** the boot memory map is now treated as untrusted input. Every region is checked for zero
+  length and an unrepresentable end address with checked arithmetic; reversed start/end pairs are
+  refused rather than wrapping; byte totals saturate explicitly instead of silently overflowing; a
+  defective map is fatal and names the offending region. Only regions the bootloader classified as
+  `Usable` can be handed out, non-usable claims always win over usable ones regardless of the order
+  firmware listed them in, and the first MiB plus the kernel image are reserved explicitly. The
+  allocator starts with every frame unavailable, so an unmentioned frame is never handed out.
+- **Still absent, so still not protected:** any memory protection (no paging of our own, no page
+  permissions, no W^X, no guard pages), privilege separation, userspace, syscalls, sandboxing, signed
+  or verified boot, secure update, recovery, and — importantly for this stage — **any CPU fault
+  handling**: there is no IDT, so a page fault, general-protection fault or double fault is not
+  reported by the kernel and cannot be contained. Frames are handed out but nothing is mapped to them
+  yet.
+- **Attack surface at this stage:** the firmware/bootloader memory map and the bootloader's `BootInfo`
+  fields. These are now validated, but validation is limited to range sanity; the kernel cannot yet
+  cross-check that the map describes the real machine, and the stack and framebuffer reservations
+  rely on the bootloader having marked those frames non-usable (see limitation 1 of
+  `docs/verification/M2-MEMORY-EVIDENCE.md`).
+- **Host safety unchanged:** this stage still writes only under the gitignored `build/` directory and
+  reads system firmware read-only; the QEMU smoke test attaches no physical disk or host device.
+- **Not a security claim:** the allocator reduces the chance of the kernel handing out firmware, MMIO
+  or its own memory. It provides no isolation, no deallocation, and no defence against a bug in the
+  kernel itself.
+
 ## Staged mitigations
 
 Early stages: no execution support; parser tests must use benign test fixtures and never launch untrusted files. Later stages: safe parser, least-privilege loader, runtime isolation, download-origin metadata, transparent warning UI, app-specific data directories/prefixes, controlled IPC, reproducible compatibility tests, uninstall/rollback, and vulnerability reporting process.

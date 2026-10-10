@@ -1,34 +1,109 @@
 # Milestones and Acceptance Checklist
 
-**Status at blueprint creation:** all implementation milestones are planned; no OS implementation is yet verified by this blueprint. Update this file only after real repository evidence exists.
+**Status:** M0 is in progress (its documented checks now pass from a fresh clone, but the
+unresolved licence question and a first CI run are still outstanding), M1 is verified (2026-10-10,
+QEMU boot tested), M2 is in progress (memory-map validation, bootstrap frame allocation and exception
+reporting/controlled fatal handling are done; page tables and virtual memory are not), and M3 onwards
+are planned. Update this file only after real repository evidence exists; each verified claim below
+links to the evidence that supports it.
 
 Use a status of `PLANNED`, `IN PROGRESS`, `BLOCKED`, or `VERIFIED`. For a VERIFIED milestone, link to the commit/PR and record the exact tests and environments. A code merge alone does not prove that a feature works.
 
-## M0 — Repository and reproducible developer workflow
+## M0 — Repository and reproducible developer workflow — `IN PROGRESS`
 
-- [ ] Confirm project licence decision or mark it explicitly undecided.
-- [ ] Establish build environment documentation and pinned toolchain as needed.
-- [ ] Add `.gitignore`, contribution guidance, ADR template and basic CI with least privilege.
-- [ ] Record dependency provenance and supported development host(s).
-- [ ] Verify clean checkout instructions on at least one development environment.
-- **Gate:** clean checkout can run documented checks; no secrets or accidental binaries committed.
+- [x] Confirm project licence decision or mark it explicitly undecided. — Marked undecided in
+      `LICENCE-STATUS.md`. **Owner action outstanding:** a root `LICENSE` file (MIT, copyright 2026
+      NotPolishTom) contradicts that file, so the owner must either ratify MIT or remove it.
+      Milestone 1 added or changed no licence terms and set no `license` field in any `Cargo.toml`.
+- [x] Establish build environment documentation and pinned toolchain as needed. —
+      `rust-toolchain.toml` pins `nightly-2026-10-08` with the `rustfmt`, `clippy`, `llvm-tools` and
+      `rust-src` components and the `x86_64-unknown-none`/`x86_64-unknown-uefi` targets;
+      `docs/development/BUILDING.md` records the verified host and exact commands.
+- [x] Add `.gitignore`, contribution guidance, ADR template and basic CI with least privilege. —
+      `.gitignore`, `CONTRIBUTING.md`, `docs/architecture/adr/ADR-TEMPLATE.md` and
+      `.github/workflows/ci.yml` (`permissions: contents: read`, `actions/checkout` pinned to a SHA
+      that was verified against the GitHub API on 2026-10-10, no secrets referenced).
+- [x] Record dependency provenance and supported development host(s). — `boot/README.md` records
+      `bootloader`/`bootloader_api` 0.11.17 (MIT OR Apache-2.0); BUILDING.md records the tested host.
+- [x] Verify clean checkout instructions on at least one development environment. — Verified
+      2026-10-10 by cloning the committed branch (`865b626`) into a fresh directory and running every
+      documented command there: `cargo fmt --all --check`, both clippy invocations,
+      `cargo test -p uart16550`, `cargo build -p boot-image` (kernel and both images generated from
+      nothing) and both `tools/test/qemu-smoke.sh` modes passed. Recorded in
+      `docs/verification/M1-BOOT-EVIDENCE.md`. This is still only the one Ubuntu 24.04 x86-64 host;
+      a second machine or another OS is **NOT RUN**.
+- **Gate:** clean checkout can run documented checks; no secrets or accidental binaries committed. —
+      Met for this host: the documented checks pass from a fresh clone, nothing generated (`/build/`,
+      `/target/`) is committed, and the staged set was reviewed for secrets. The CI workflow itself
+      has still never executed.
 
-## M1 — Bootable x86-64 kernel skeleton
+## M1 — Bootable x86-64 kernel skeleton — `VERIFIED` (2026-10-10)
 
-- [ ] Document UEFI/bootloader/kernel handoff.
-- [ ] Build a real kernel with an explicit entry point and controlled panic path.
-- [ ] Print serial diagnostics and `NEW_OS_KERNEL_BOOT_OK` only after boot path succeeds.
-- [ ] Provide bounded QEMU smoke-test script when tooling permits.
-- [ ] Keep output images in ignored build directories; no physical disk writes.
-- **Gate:** reproducible build; QEMU boot marker observed, or the exact boot blocker is documented as NOT RUN.
+Evidence: `docs/verification/M1-BOOT-EVIDENCE.md` (environment, commands, exit codes, guest serial
+output, negative control, and an independent re-run including build-hygiene checks).
 
-## M2 — Boot info, memory and fault diagnostics
+- [x] Document UEFI/bootloader/kernel handoff. — ADR-0003 (accepted, with the verified component
+      version), `boot/README.md`, and the boot-flow section of `kernel/src/main.rs`.
+- [x] Build a real kernel with an explicit entry point and controlled panic path. — Our own
+      `kernel_main` reached via `_start` generated by `bootloader_api::entry_point!`; `#[panic_handler]`
+      writes a diagnostic to serial before halting, and serial writes are bounded so a faulty UART
+      cannot hang the kernel.
+- [x] Print serial diagnostics and `NEW_OS_KERNEL_BOOT_OK` only after boot path succeeds. — The
+      marker is written last, byte-by-byte, and the kernel halts as failed if any marker byte was
+      dropped rather than leaving a misleading success line.
+- [x] Provide bounded QEMU smoke-test script when tooling permits. — `tools/test/qemu-smoke.sh`
+      asserts the guest-originated marker, uses a timeout, and only attaches generated images.
+- [x] Keep output images in ignored build directories; no physical disk writes. — `build/boot/*.img`
+      under a gitignored `/build/`; no host disk or boot configuration was touched.
+- **Gate:** reproducible build; QEMU boot marker observed, or the exact boot blocker is documented as NOT RUN. —
+      **Met:** the build was repeated successfully and the marker was observed in QEMU 8.2.2 for both
+      the BIOS (`-machine pc` + SeaBIOS) and UEFI (`-machine q35` + OVMF) images, with a zeroed-image
+      negative control that failed as required.
 
-- [ ] Validate boot information and memory map safely.
-- [ ] Establish early physical page management and virtual memory/page tables.
-- [ ] Add exception reporting and controlled fatal handling.
-- [ ] Add tests for pure address/map logic and malformed inputs.
-- **Gate:** tests pass; faults produce useful diagnostics in QEMU; no unsupported memory-management claims.
+Explicitly **not** proven by M1: byte-for-byte reproducibility of the UEFI image (measured and found
+false — the BIOS image *is* byte-identical across regenerations), physical hardware,
+KVM-accelerated runs, and any memory, interrupt, driver, userspace or Windows-compatibility
+capability. The CI workflow has also never executed (nothing has been pushed yet).
+
+## M2 — Boot info, memory and fault diagnostics — `IN PROGRESS`
+
+Two slices are done on 2026-10-10: (1) memory-map validation and the bootstrap physical frame
+allocator, evidence in `docs/verification/M2-MEMORY-EVIDENCE.md`, decisions in ADR-0014; and
+(2) exception reporting and controlled fatal handling (our own GDT, TSS with a double-fault IST stack
+and IDT, plus two in-boot fault self-tests), evidence in `docs/verification/M2-EXCEPTION-EVIDENCE.md`,
+decisions in ADR-0015.
+
+- [x] Validate boot information and memory map safely. — `crates/physmem::MapValidator` checks each
+      `BootInfo` region for zero length and an unrepresentable end address with checked arithmetic,
+      refuses reversed start/end pairs, sums totals with an explicit saturation flag, and makes a
+      defective map fatal with the offending region index printed before the halt.
+- [ ] Establish early physical page management and virtual memory/page tables. — **Partial.**
+      Physical frames are managed: a bitmap allocator over the first 4 GiB in 4 KiB frames, usable
+      claims first, then every non-usable claim, plus explicit reservations for the first MiB and the
+      kernel image. **No virtual memory and no page tables of our own**: the kernel still executes on
+      the tables the bootloader created, and there is no deallocation.
+- [x] Add exception reporting and controlled fatal handling. — Our own GDT, a TSS whose `IST[1]`
+      points at a dedicated 16 KiB stack, and a 256-entry IDT; one shared assembly path saves every
+      register and calls a Rust dispatcher that reports the exception, its decoded error code, `cr2`
+      for page faults, the faulting `rip`/`cs`/`rflags` and the register file before the controlled
+      halt. A real `int3` and a real, resumed page fault are run in the boot path and asserted by the
+      smoke test (`NEW_OS_KERNEL_EXCEPTION_OK`). **No interrupt sources are enabled** (`IF` stays
+      clear, no timer), and a real page fault is still fatal — only the kernel's own armed self-test
+      probe is resumed. See `docs/verification/M2-EXCEPTION-EVIDENCE.md`.
+- [x] Add tests for pure address/map logic and malformed inputs. — 21 host tests in `crates/physmem`
+      cover zero-length regions, unrepresentable end addresses, saturating totals, reversed bounds,
+      unsupported frame sizes, partial-frame handling, bitmap-overflow reporting, non-usable claims
+      overriding usable ones, call-order enforcement and rejected calls leaving state unchanged. A
+      further 10 host tests in `crates/x86exc` cover the exception vector names, the error-code
+      table (asserted exactly, because a wrong entry silently shifts the whole exception frame), the
+      IDT gate bit layout, the `GDTR`/`IDTR` pointer layout and page-fault error-code decoding.
+- **Gate:** tests pass; faults produce useful diagnostics in QEMU; no unsupported memory-management claims. —
+      **Met for these clauses:** tests pass (21 + 5 + 10 host tests), memory-map defects and a real
+      page fault both produce useful diagnostics in QEMU, and the no-unsupported-claims rule is kept
+      — the boot report and the docs state explicitly that there is no virtual memory of our own, no
+      deallocation, no privilege separation and no interrupt sources. The milestone itself stays
+      `IN PROGRESS` because the remaining item — our own page tables and virtual memory — is not
+done.
 
 ## M3 — Interrupts, timers, basic task/process model
 

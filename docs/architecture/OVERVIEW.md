@@ -1,6 +1,6 @@
 # Architecture Overview
 
-**Status:** initial design outline; architecture decisions remain proposed until the first experiments and ADR reviews are complete.
+**Status:** initial design outline. Layers 1–2 are partially implemented and boot-tested at their smallest size (milestones 1–2); every other layer is planned only. ADR-0003, ADR-0004, ADR-0005, ADR-0014 and ADR-0015 are now accepted on boot-experiment evidence; ADR-0002, ADR-0007 and ADR-0013 remain proposed.
 
 ## Goal
 
@@ -32,4 +32,37 @@ The desktop shell's ability to associate `.exe` files is not Windows compatibili
 
 ## Current implementation state
 
-This document is a plan only. No kernel, loader, desktop, driver model or runtime should be listed as implemented until it exists and has corresponding verification evidence.
+**Booting, serial diagnostics, the first memory work and exception handling (milestones 1–2,
+2026-10-10).** What exists and is verified:
+
+- Our own kernel crate (`kernel/`) with an x86-64 `no_std` entry path reached from the reused
+  `bootloader` 0.11.17 component, a controlled panic path, a bounded halt loop, and a polled 16550
+  serial console (`crates/uart16550/`).
+- Exception handling (`kernel/src/interrupts.rs` + `crates/x86exc/`): our own GDT, a TSS whose `IST[1]`
+  points at a dedicated double-fault stack, and a 256-entry IDT. One shared assembly path saves the
+  registers and calls a Rust dispatcher that reports the exception, its decoded error code, `cr2` for
+  page faults, the faulting `rip`/`cs`/`rflags` and the register file before the controlled halt; a
+  real `int3` trap and a real, resumed page fault are run in the boot path and asserted. **No
+  interrupt sources are enabled** (`IF` stays clear), and a real page fault is still fatal.
+- Boot-time memory handling (`crates/physmem/`): the firmware memory map from `BootInfo` is validated
+  with checked arithmetic and a defective map is fatal; usable regions feed a bitmap **physical frame**
+  allocator (first 4 GiB, 4 KiB frames) that starts with every frame unavailable, applies every
+  non-usable claim afterwards, reserves the first MiB and the kernel image explicitly, and hands out a
+  small bootstrap allocation. There is **no deallocation** and no reclamation of bootloader memory.
+- Bootable BIOS and UEFI disk images generated from the kernel ELF by `boot/image`, with a bounded
+  QEMU smoke test (`tools/test/qemu-smoke.sh`) that asserts three guest-originated serial markers
+  (`NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_MEMORY_OK`, `NEW_OS_KERNEL_BOOT_OK`), in the order the
+  kernel is supposed to emit them.
+- A pinned nightly toolchain, least-privilege CI definition, and the evidence records in
+  `docs/verification/M1-BOOT-EVIDENCE.md`, `docs/verification/M2-MEMORY-EVIDENCE.md` and
+  `docs/verification/M2-EXCEPTION-EVIDENCE.md`.
+
+**Nothing else is implemented.** Specifically absent: virtual memory and page tables of our own (the
+kernel still runs on the bootloader's tables), interrupt sources and timers (`IF` is deliberately left
+clear; there is no PIC/APIC programming and no `sti`), scheduling, threads/processes, syscalls,
+userspace, privilege separation, any driver model, any storage/filesystem/network/audio/input driver,
+graphics or compositor, the desktop shell, the file manager, the package manager, the installer, and
+the entire Windows compatibility programme (PE parsing, loader, Win32 APIs). The kernel reports the
+framebuffer details the bootloader hands over; it still draws nothing.
+
+Do not describe any planned item above as existing until it has verification evidence.

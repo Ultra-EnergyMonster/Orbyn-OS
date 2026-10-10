@@ -1,0 +1,18 @@
+[package]
+name = "boot-image"
+description = "Builds BIOS and UEFI bootable disk images from the New OS kernel ELF."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[build-dependencies]
+# Artifact dependency: cargo builds the `kernel` crate for x86_64-unknown-none and exposes the
+# resulting ELF path to build.rs as CARGO_BIN_FILE_KERNEL_kernel. Requires
+# `[unstable] bindeps = true` in .cargo/config.toml.
+kernel = { path = "../../kernel", artifact = "bin", target = "x86_64-unknown-none" }
+bootloader = "0.11.17"
+
+[lints]
+workspace = true

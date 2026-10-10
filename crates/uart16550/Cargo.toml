@@ -1,0 +1,11 @@
+[package]
+name = "uart16550"
+description = "Minimal polled 16550-compatible UART driver (no_std) for the New OS kernel."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
