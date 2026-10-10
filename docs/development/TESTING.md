@@ -3,7 +3,7 @@
 Use the verification vocabulary in `docs/verification/VERIFICATION.md`. A check that did not run is
 reported as `NOT RUN`, never as passed.
 
-## Verified checks (milestones 1–2)
+## Verified checks (milestones 1–3)
 
 Commands were run from the repository root on 2026-10-10 in the environment recorded in
 `docs/development/BUILDING.md`. Results for each run are recorded in
@@ -36,7 +36,7 @@ correctness. Tests are run per package.
 | `cargo test -p physmem` | Memory-map validation and the bitmap frame allocator behave as asserted for well-formed and malformed input, on the host, without touching hardware | That the firmware map on a real machine looks like the fixtures; that the kernel uses the allocator correctly |
 | `cargo test -p x86exc` | The exception vector metadata, the error-code table, the IDT gate bit layout, the table-pointer layout and page-fault error-code decoding behave as asserted, on the host | That the IDT is executed, that a fault is delivered, or that the assembly stubs/copies are correct |
 | `cargo build -p boot-image` | The kernel compiles for its target and the boot images can be generated | That the images boot |
-| `tools/test/qemu-smoke.sh bios\|uefi` | The generated image boots and the **guest kernel** prints `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on its own COM1 serial path, in that order — so the memory path cannot stop running without a failure | Physical hardware, other devices, virtual memory, interrupts, userspace, or any desktop/Windows-compatibility feature |
+| `tools/test/qemu-smoke.sh bios\|uefi` | The generated image boots and the **guest kernel** prints `NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_TIMER_OK`, `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on its own COM1 serial path, in that order — so the exception, timer and memory paths cannot stop running without a failure | Physical hardware, other devices, virtual memory, the task/process model, userspace, or any desktop/Windows-compatibility feature |
 
 ## Boot smoke test requirements
 
@@ -44,8 +44,9 @@ correctness. Tests are run per package.
 `docs/verification/VERIFICATION.md`:
 
 - the assertions are markers written by the guest kernel's own serial code, not by any host helper
-  (`NEW_OS_KERNEL_MEMORY_OK`, then `NEW_OS_KERNEL_BOOT_OK` after it, so the initialisation path
-  cannot be shortened while the test still passes);
+  (`NEW_OS_KERNEL_EXCEPTION_OK`, `NEW_OS_KERNEL_TIMER_OK`, `NEW_OS_KERNEL_MEMORY_OK`, then
+  `NEW_OS_KERNEL_BOOT_OK`, in that order, so the initialisation path cannot be shortened while the
+  test still passes);
 - a timeout alone is never a pass, and a failure names exactly which marker(s) were missing;
 - the only disks QEMU receives are generated files under `build/boot/` and a read-only
   copy-on-write OVMF vars store — no physical disk, host block device, USB device or passthrough;
@@ -58,13 +59,14 @@ Environment overrides: `QEMU_BIN`, `QEMU_ACCEL`, `QEMU_TIMEOUT` (seconds, defaul
 
 ### Negative control
 
-A boot test that can only ever pass is worthless, so the outcome was falsified once: replacing
-`build/boot/bios.img` with a zero-filled file of the same size made the smoke test exit `1` with
-`FAIL: guest kernel did not emit NEW_OS_KERNEL_BOOT_OK within 8s` and an empty serial log. The
-original image was then restored and its sha256 verified identical to the pre-test image. The test
-itself never rewrites an image, so a replaced or truncated image also stays replaced until you
-rebuild; `cargo build -p boot-image` then detects the wrong contents and regenerates it (verified
-2026-10-10).
+A boot test that can only ever pass is worthless, so the outcome is falsified in two ways. First, a
+zero-filled `build/boot/bios.img` of the same size makes the smoke test exit `1`, report every
+required marker missing and capture an empty serial log; the original image is then restored and its
+sha256 verified identical. Second, each newly added marker is checked on its own by removing just
+that marker's emission from the kernel, rebuilding and confirming the test fails naming *only* that
+marker — so no marker is silently covered by the others. The test never rewrites an image, so a
+replaced or truncated image also stays replaced until you rebuild; `cargo build -p boot-image` then
+detects the wrong contents and regenerates it (verified 2026-10-10).
 
 ## Unit test coverage in this milestone
 

@@ -3,8 +3,9 @@
 **Status:** M0 is in progress (its documented checks now pass from a fresh clone, but the
 unresolved licence question and a first CI run are still outstanding), M1 is verified (2026-10-10,
 QEMU boot tested), M2 is in progress (memory-map validation, bootstrap frame allocation and exception
-reporting/controlled fatal handling are done; page tables and virtual memory are not), and M3 onwards
-are planned. Update this file only after real repository evidence exists; each verified claim below
+reporting/controlled fatal handling are done; page tables and virtual memory are not), M3 is in
+progress (a PIT timer interrupt source is done; synchronisation primitives and the task/process model
+are not), and M4 onwards are planned. Update this file only after real repository evidence exists; each verified claim below
 links to the evidence that supports it.
 
 Use a status of `PLANNED`, `IN PROGRESS`, `BLOCKED`, or `VERIFIED`. For a VERIFIED milestone, link to the commit/PR and record the exact tests and environments. A code merge alone does not prove that a feature works.
@@ -105,9 +106,17 @@ decisions in ADR-0015.
       `IN PROGRESS` because the remaining item — our own page tables and virtual memory — is not
 done.
 
-## M3 — Interrupts, timers, basic task/process model
+## M3 — Interrupts, timers, basic task/process model — `IN PROGRESS`
 
-- [ ] Establish IDT/exception/interrupt handling and timer source.
+First slice (the timer source) is done on 2026-10-10. Evidence:
+`docs/verification/M3-TIMER-EVIDENCE.md`; decision in ADR-0016.
+
+- [x] Establish IDT/exception/interrupt handling and timer source. — Exceptions are done (milestone 2,
+      ADR-0015) and the timer now works: both 8259 PICs are re-initialised so IRQ0 is vector 32, the
+      PIT runs at 100 Hz, every other PIC line is masked, and `sti` is executed only after the IDT and
+      PIC are ready. The handler acknowledges the PIC and counts ticks, and the boot asserts real
+      interrupts via `NEW_OS_KERNEL_TIMER_OK`. **No scheduler and no timekeeping** — nothing consumes
+      the ticks yet — and no APIC/I/O APIC. See `docs/verification/M3-TIMER-EVIDENCE.md`.
 - [ ] Implement safe interrupt-safe synchronisation primitives as required.
 - [ ] Document scheduler/task invariants and CPU state handling.
 - [ ] Add deterministic tests where possible.

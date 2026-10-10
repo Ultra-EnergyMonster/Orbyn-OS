@@ -16,7 +16,8 @@ what has been observed.
 | M1 bootable kernel skeleton | Implemented; build verified; unit tested; **QEMU boot tested (BIOS and UEFI)** |
 | M2 boot memory map + physical frame allocator | Implemented; unit tested (21 tests); **QEMU boot tested (BIOS and UEFI)**; no virtual memory, no deallocation |
 | M2 exception reporting + controlled fatal handling | Implemented; unit tested (10 tests for the encoding/decoding); **QEMU boot tested (BIOS and UEFI)** with a real breakpoint trap and a real, resumed page fault |
-| Kernel virtual memory, interrupts/timers, scheduling | Not started (rest of M2, M3) |
+| M3 PIT timer interrupt source | Implemented; **QEMU boot tested (BIOS and UEFI)** with real IRQ0 interrupts observed |
+| Kernel virtual memory/page tables, APIC, scheduling | Not started (rest of M2, M3) |
 | Drivers beyond the debug UART | Not started (M4) |
 | Userspace, filesystem, packages | Not started (M5/M6) |
 | Desktop, file manager, settings | Not started (M7) |
@@ -25,12 +26,13 @@ what has been observed.
 The prototype is deliberately tiny: firmware hands control to the reused `bootloader` 0.11 component,
 which loads our kernel ELF and jumps to our `_start`/`kernel_main`. The kernel initialises COM1, installs
 its own GDT, TSS (with a double-fault IST stack) and 256-entry IDT, proves that path with a real
-breakpoint trap and a deliberately faulted, resumed page fault (`NEW_OS_KERNEL_EXCEPTION_OK`), prints a
-summary of the boot handoff, validates the firmware memory map, builds a bitmap physical frame
-allocator from the usable regions (reserving the first MiB and its own image), takes a small bootstrap
-allocation, prints `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on the serial console, and
-halts. It does **not** create page tables of its own, enable interrupt sources (no timer, no `sti`),
-schedule tasks or run userspace, and the frames it hands out are not mapped to anything yet.
+breakpoint trap and a deliberately faulted, resumed page fault (`NEW_OS_KERNEL_EXCEPTION_OK`), starts
+the PIT timer at 100 Hz and waits for real IRQ0 interrupts (`NEW_OS_KERNEL_TIMER_OK`), prints a summary
+of the boot handoff, validates the firmware memory map, builds a bitmap physical frame allocator from
+the usable regions (reserving the first MiB and its own image), takes a small bootstrap allocation,
+prints `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on the serial console, and halts. It
+does **not** create page tables of its own, use the APIC, schedule tasks or run userspace, and the
+frames it hands out are not mapped to anything yet.
 
 ### Building and boot-testing the prototype
 

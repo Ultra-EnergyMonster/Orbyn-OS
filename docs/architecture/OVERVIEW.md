@@ -1,6 +1,6 @@
 # Architecture Overview
 
-**Status:** initial design outline. Layers 1–2 are partially implemented and boot-tested at their smallest size (milestones 1–2); every other layer is planned only. ADR-0003, ADR-0004, ADR-0005, ADR-0014 and ADR-0015 are now accepted on boot-experiment evidence; ADR-0002, ADR-0007 and ADR-0013 remain proposed.
+**Status:** initial design outline. Layers 1–2 are partially implemented and boot-tested at their smallest size (milestones 1–3); every other layer is planned only. ADR-0003, ADR-0004, ADR-0005, ADR-0014, ADR-0015 and ADR-0016 are now accepted on boot-experiment evidence; ADR-0002, ADR-0007 and ADR-0013 remain proposed.
 
 ## Goal
 
@@ -42,8 +42,13 @@ The desktop shell's ability to associate `.exe` files is not Windows compatibili
   points at a dedicated double-fault stack, and a 256-entry IDT. One shared assembly path saves the
   registers and calls a Rust dispatcher that reports the exception, its decoded error code, `cr2` for
   page faults, the faulting `rip`/`cs`/`rflags` and the register file before the controlled halt; a
-  real `int3` trap and a real, resumed page fault are run in the boot path and asserted. **No
-  interrupt sources are enabled** (`IF` stays clear), and a real page fault is still fatal.
+  real `int3` trap and a real, resumed page fault are run in the boot path and asserted. A real page
+  fault is still fatal.
+- A hardware timer (`kernel/src/interrupts.rs`): the 8259 PICs are re-initialised so IRQ0 is vector
+  32, the PIT runs at 100 Hz, every other PIC line is masked, and `sti` is enabled only after the IDT
+  and PIC are ready. The handler acknowledges the PIC and counts ticks; the boot waits for real
+  interrupts and asserts `NEW_OS_KERNEL_TIMER_OK`. **No scheduler, no timekeeping and no APIC** —
+  nothing consumes the ticks yet.
 - Boot-time memory handling (`crates/physmem/`): the firmware memory map from `BootInfo` is validated
   with checked arithmetic and a defective map is fatal; usable regions feed a bitmap **physical frame**
   allocator (first 4 GiB, 4 KiB frames) that starts with every frame unavailable, applies every
@@ -58,11 +63,11 @@ The desktop shell's ability to associate `.exe` files is not Windows compatibili
   `docs/verification/M2-EXCEPTION-EVIDENCE.md`.
 
 **Nothing else is implemented.** Specifically absent: virtual memory and page tables of our own (the
-kernel still runs on the bootloader's tables), interrupt sources and timers (`IF` is deliberately left
-clear; there is no PIC/APIC programming and no `sti`), scheduling, threads/processes, syscalls,
-userspace, privilege separation, any driver model, any storage/filesystem/network/audio/input driver,
-graphics or compositor, the desktop shell, the file manager, the package manager, the installer, and
-the entire Windows compatibility programme (PE parsing, loader, Win32 APIs). The kernel reports the
-framebuffer details the bootloader hands over; it still draws nothing.
+kernel still runs on the bootloader's tables), the APIC/I/O APIC and every interrupt source other
+than the PIT timer, scheduling, threads/processes, syscalls, userspace, privilege separation, any
+driver model, any storage/filesystem/network/audio/input driver, graphics or compositor, the desktop
+shell, the file manager, the package manager, the installer, and the entire Windows compatibility
+programme (PE parsing, loader, Win32 APIs). The kernel reports the framebuffer details the bootloader
+hands over; it still draws nothing.
 
 Do not describe any planned item above as existing until it has verification evidence.

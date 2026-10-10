@@ -13,21 +13,21 @@
 //!
 //! Opens the COM1 serial console, installs our own exception tables (GDT, TSS with a double-fault
 //! IST stack, and a 256-entry IDT; see [`interrupts`]) and proves them with a real breakpoint trap
-//! and a real, resumed page fault, then reports a summary of what the bootloader handed over,
-//! validates the reported memory map with checked arithmetic (see [`report_memory_map`]), builds a
-//! bitmap physical frame allocator over validated usable regions, takes a small bootstrap
-//! allocation from it, prints `NEW_OS_KERNEL_MEMORY_OK`, prints `NEW_OS_KERNEL_BOOT_OK`, then halts
-//! the CPU.
+//! and a real, resumed page fault, then starts the PIT timer and proves it delivers IRQ0 interrupts,
+//! then reports a summary of what the bootloader handed over, validates the reported memory map with
+//! checked arithmetic (see [`report_memory_map`]), builds a bitmap physical frame allocator over
+//! validated usable regions, takes a small bootstrap allocation from it, prints
+//! `NEW_OS_KERNEL_MEMORY_OK`, prints `NEW_OS_KERNEL_BOOT_OK`, then halts the CPU.
 //!
 //! # What this code does NOT do
 //!
 //! No virtual memory of our own: the kernel still runs on the page tables the `bootloader`
-//! component created, and nothing here maps, unmaps or protects anything. Exception handling
-//! exists, but **no interrupt sources are enabled** — `IF` stays clear, so there is no timer,
-//! no scheduling, no `sti`, and vectors 32+ are routed only so an unexpected one is reported
-//! rather than triple faulting. No userspace or syscalls, no drivers beyond the debug UART, no
-//! filesystem, no graphics output, no desktop and no Windows compatibility. The bootstrap frames
-//! handed out by [`allocate_bootstrap_frames`] are taken but not yet used for anything.
+//! component created, and nothing here maps, unmaps or protects anything. Interrupts exist, but only
+//! the legacy PIC/PIT timer is enabled and nothing consumes its ticks: there is **no scheduler**, no
+//! task or process model, and every other interrupt line stays masked. No userspace or syscalls, no
+//! drivers beyond the debug UART, no filesystem, no graphics output, no desktop and no Windows
+//! compatibility. The bootstrap frames handed out by [`allocate_bootstrap_frames`] are taken but not
+//! yet used for anything.
 //! See `docs/roadmap/MILESTONES.md` for the milestones that own those features.
 
 #![no_std]
@@ -70,6 +70,16 @@ const MEMORY_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_MEMORY_OK";
 /// trap and a real page fault have been reported and resumed, so it cannot be printed by a kernel
 /// that merely loaded an IDT.
 const EXCEPTION_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_EXCEPTION_OK";
+
+/// Printed after the PIT timer has been started and has been observed to interrupt the CPU.
+///
+/// Also asserted by `tools/test/qemu-smoke.sh`. The marker is emitted only after a minimum number of
+/// real IRQ0 interrupts have landed in the handler, so it cannot be printed by a kernel that merely
+/// programmed the PIT without unmasking or enabling interrupts.
+const TIMER_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_TIMER_OK";
+
+/// Timer interrupts the boot self-test waits for before declaring the timer working.
+const TIMER_SELF_TEST_TICKS: u64 = 3;
 
 /// Physical address space the frame bitmap describes: the first 4 GiB.
 ///
@@ -179,6 +189,20 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             format_args!("exception self-test failed: {reason}"),
         ),
     }
+
+    // Start the hardware timer and prove it delivers interrupts before continuing. The timer keeps
+    // running for the rest of the boot; nothing consumes the ticks yet because there is no scheduler.
+    interrupts::enable_timer();
+    interrupts::wait_for_ticks(TIMER_SELF_TEST_TICKS);
+    write_marker(&mut console, TIMER_SUCCESS_MARKER);
+    write_line(
+        &mut console,
+        format_args!(
+            "timer: PIT at {} Hz; {} interrupt(s) observed (IRQ0 -> vector 32)",
+            interrupts::TIMER_HZ,
+            interrupts::timer_ticks()
+        ),
+    );
 
     report_boot_handoff(&mut console, boot_info);
 

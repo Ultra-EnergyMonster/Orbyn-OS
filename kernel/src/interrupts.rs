@@ -20,23 +20,27 @@
 //! - An IDT with all 256 entries: vectors `0..=31` use one stub each (with the dummy error code the
 //!   CPU-supplied frame needs), vectors `32..=255` use a shared unexpected-vector stub. Vectors 2
 //!   (`#NMI`), 8 (`#DF`) and 18 (`#MC`) run on the IST stack.
+//! - A hardware timer: the 8259 PICs are remapped so IRQ0 becomes vector 32, the PIT is programmed
+//!   for [`TIMER_HZ`], and [`enable_timer`] unmasks IRQ0 and enables interrupts. The timer is the
+//!   only interrupt source; its handler counts and acknowledges and never touches the console.
 //! - One shared assembly path ([`exception_common`]) that saves every general-purpose register,
 //!   calls the Rust dispatcher ([`exception_dispatch`]), restores the registers and returns with
 //!   `iretq`.
 //!
 //! # What this does NOT do
 //!
-//! No interrupt sources are enabled: `IF` stays clear, there is no PIC/APIC programming, no timer,
-//! no `sti`, and vectors 32+ exist only so that an unexpected one is reported instead of triple
-//! faulting. There is no privilege separation yet, so the handlers run at ring 0 on the kernel
-//! stack and the ring-3 paths (a TSS `rsp0` that matters, `SS`/`RSP` in the frame) are unused. The
-//! page-fault handler cannot fix up a real fault; only the kernel's own armed self-test probe is
-//! resumed, and everything else halts.
+//! Only the legacy 8259 PIC and PIT are used: no local APIC, no I/O APIC, no MSI, no per-CPU
+//! interrupt routing, and every PIC line except the timer is left masked. There is no scheduler:
+//! the timer only counts ticks and nothing consumes them yet. Vectors 32..=255 exist so that an
+//! unexpected interrupt is reported instead of triple-faulting. There is no privilege separation
+//! yet, so the handlers run at ring 0 on the kernel stack and the ring-3 paths (a TSS `rsp0` that
+//! matters, `SS`/`RSP` in the frame) are unused. The page-fault handler cannot fix up a real fault;
+//! only the kernel's own armed self-test probe is resumed, and everything else halts.
 
 use core::arch::{asm, naked_asm};
 use core::cell::UnsafeCell;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use uart16550::SerialPort;
 use x86exc::{EXCEPTION_VECTORS, GateDescriptor, PageFaultErrorCode, TablePointer, Vector};
 
@@ -86,6 +90,31 @@ const TSS_ACCESS_BYTE: u64 = 0x89;
 /// a silent pass.
 const PAGE_FAULT_PROBE_ADDRESS: u64 = 0x0000_7FFF_FFFF_F000;
 
+/// I/O ports of the legacy 8259 PICs (master and slave).
+const PIC1_COMMAND: u16 = 0x20;
+const PIC1_DATA: u16 = 0x21;
+const PIC2_COMMAND: u16 = 0xA0;
+const PIC2_DATA: u16 = 0xA1;
+
+/// End-of-interrupt command for the master PIC.
+const PIC_EOI: u8 = 0x20;
+
+/// Vector offsets the PICs are remapped to, so IRQ0..15 land on vectors 32..47 and no longer
+/// collide with the CPU exceptions at 0..31.
+const PIC_MASTER_OFFSET: u8 = 0x20;
+const PIC_SLAVE_OFFSET: u8 = 0x28;
+
+/// I/O ports and input clock of the 8253/8254 PIT.
+const PIT_CHANNEL0: u16 = 0x40;
+const PIT_COMMAND: u16 = 0x43;
+const PIT_INPUT_HZ: u32 = 1_193_182;
+
+/// Frequency the PIT is programmed for, in Hz.
+pub const TIMER_HZ: u16 = 100;
+
+/// Vector IRQ0 is delivered on once the PICs are remapped.
+const TIMER_VECTOR: u8 = 32;
+
 /// Set by the dispatcher when the `int3` self-test reaches it.
 static BREAKPOINT_OBSERVED: AtomicBool = AtomicBool::new(false);
 
@@ -94,6 +123,9 @@ static PAGE_FAULT_ARMED: AtomicBool = AtomicBool::new(false);
 
 /// Set by the dispatcher when it resumed the armed page-fault probe.
 static PAGE_FAULT_OBSERVED: AtomicBool = AtomicBool::new(false);
+
+/// Timer interrupts observed since boot. Bumped from the interrupt handler.
+static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
 
 /// The 64-bit task-state segment. Only `IST[1]` is used.
 ///
@@ -278,6 +310,11 @@ exception_stub_table!(
     (stub_31, 31, without_error),
 );
 
+// Entry stub for the hardware timer, which IRQ0 is remapped to (vector 32). Like the exception
+// stubs it pushes a dummy error code, because an interrupt delivers no error code; that keeps the
+// frame layout identical for the shared path.
+define_exception_stub!(timer_stub, 32, without_error);
+
 /// Entry stub for every vector the kernel does not expect (32..=255).
 ///
 /// The vector number is a sentinel so the dispatcher can say the vector is unknown rather than
@@ -401,6 +438,8 @@ unsafe fn install() {
                     _ => 0,
                 };
                 (EXCEPTION_STUBS[vector] as *const () as u64, ist)
+            } else if (vector as u8) == TIMER_VECTOR {
+                (timer_stub as *const () as u64, 0)
             } else {
                 (unexpected_vector_stub as *const () as u64, 0)
             };
@@ -444,12 +483,38 @@ extern "C" fn exception_dispatch(frame: *mut ExceptionFrame) {
     // the duration of this call, and it is the only reference to it.
     let frame = unsafe { &mut *frame };
 
-    // SAFETY: the kernel is the sole owner of the COM1 UART (single CPU, interrupts disabled), and
-    // programming/writing it touches only I/O ports. The dispatcher only needs to transmit, so it
-    // uses a handle on the already-initialised port, exactly as the panic handler does.
+    let vector = frame.vector();
+
+    // Hardware interrupts (vectors 32+) arrive here only through their IDT entry. The timer (IRQ0
+    // remapped to vector 32) is the only source enabled; it is counted and acknowledged without
+    // touching the console, so a 100 Hz interrupt cannot flood it. Any other interrupt is
+    // unexpected and fatal.
+    if vector.raw() >= 32 {
+        if vector.raw() == TIMER_VECTOR {
+            TIMER_TICKS.fetch_add(1, SeqCst);
+            // SAFETY: the master PIC is the source of IRQ0 and the only PIC with an unmasked line;
+            // writing its command port acknowledges the interrupt.
+            unsafe {
+                outb(PIC1_COMMAND, PIC_EOI);
+            }
+            return;
+        }
+        // SAFETY: the kernel is the sole owner of the COM1 UART (single CPU); writing it touches
+        // only I/O ports.
+        let mut console = unsafe { SerialPort::new(COM1_BASE) };
+        write_line(
+            &mut console,
+            format_args!("[FATAL] unexpected interrupt on vector {}", vector.raw()),
+        );
+        halt_forever();
+    }
+
+    // SAFETY: the kernel is the sole owner of the COM1 UART (single CPU; the only interrupt source
+    // is the timer, whose handler does not write here), and writing it touches only I/O ports. The
+    // dispatcher only needs to transmit, so it uses a handle on the already-initialised port,
+    // exactly as the panic handler does.
     let mut console = unsafe { SerialPort::new(COM1_BASE) };
 
-    let vector = frame.vector();
     let page_fault_address = if vector.raw() == 14 {
         Some(read_cr2())
     } else {
@@ -574,6 +639,109 @@ fn read_cr2() -> u64 {
 #[unsafe(naked)]
 extern "C" fn page_fault_probe(_address: u64) {
     naked_asm!("lea rax, [rip + 2f]", "mov rcx, [rdi]", "2:", "ret",);
+}
+
+/// Writes one byte to an I/O port.
+///
+/// # Safety
+///
+/// `port` must belong to a device the kernel owns; writing it is otherwise unreviewed.
+unsafe fn outb(port: u16, value: u8) {
+    // SAFETY: `out` writes one byte to an I/O port and touches no memory; the caller guarantees the
+    // port is one the kernel owns. The kernel runs at ring 0.
+    unsafe {
+        asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
+    }
+}
+
+/// A short settle delay for the legacy PIC: a write to the unused POST/diagnostic port `0x80`.
+///
+/// # Safety
+///
+/// Writing the POST port is harmless on the test platform.
+unsafe fn io_wait() {
+    // SAFETY: port 0x80 is the POST/diagnostic port; writing zero has no effect this kernel relies
+    // on and is the conventional PIC settle delay.
+    unsafe {
+        outb(0x80, 0);
+    }
+}
+
+/// Remaps the 8259 PICs, unmasks only IRQ0, and programs the PIT to [`TIMER_HZ`].
+///
+/// # Safety
+///
+/// The kernel must own the legacy PIC/PIT ports and interrupts must be disabled, so that no
+/// interrupt is delivered while the PIC is being reprogrammed.
+unsafe fn program_pic_and_timer() {
+    // SAFETY: the kernel is the only owner of these ports, and `enable_timer` calls this before
+    // `sti`, so `IF = 0` and no interrupt can arrive mid-reprogramming.
+    unsafe {
+        // ICW1: begin initialisation, expect ICW4, cascade mode.
+        outb(PIC1_COMMAND, 0x11);
+        io_wait();
+        outb(PIC2_COMMAND, 0x11);
+        io_wait();
+        // ICW2: interrupt vector offsets (master 0x20, slave 0x28).
+        outb(PIC1_DATA, PIC_MASTER_OFFSET);
+        io_wait();
+        outb(PIC2_DATA, PIC_SLAVE_OFFSET);
+        io_wait();
+        // ICW3: the master's slave is on IRQ2, and the slave's cascade identity is 2.
+        outb(PIC1_DATA, 0x04);
+        io_wait();
+        outb(PIC2_DATA, 0x02);
+        io_wait();
+        // ICW4: 8086/88 mode.
+        outb(PIC1_DATA, 0x01);
+        io_wait();
+        outb(PIC2_DATA, 0x01);
+        io_wait();
+        // Mask every line, then unmask IRQ0 only. The slave stays fully masked, so its cascade line
+        // can never deliver anything either.
+        outb(PIC1_DATA, 0xFE);
+        outb(PIC2_DATA, 0xFF);
+
+        // PIT channel 0, lo/hi byte, mode 3 (square wave), binary counting.
+        outb(PIT_COMMAND, 0x36);
+        let divisor = PIT_INPUT_HZ / u32::from(TIMER_HZ);
+        outb(PIT_CHANNEL0, (divisor & 0xFF) as u8);
+        outb(PIT_CHANNEL0, ((divisor >> 8) & 0xFF) as u8);
+    }
+}
+
+/// Programs the PIC and PIT and enables interrupts, starting the timer.
+///
+/// The only unmasked interrupt source is the timer, and its IDT gate already exists (installed by
+/// [`init`]), so after this returns the kernel receives IRQ0 as vector [`TIMER_VECTOR`].
+pub fn enable_timer() {
+    // SAFETY: `init` installed the IDT before this is called and `IF = 0` until the explicit `sti`
+    // below, so the PIC is fully reprogrammed before any timer interrupt can be delivered. Enabling
+    // interrupts is then safe because the timer is the only unmasked source and its handler exists.
+    unsafe {
+        program_pic_and_timer();
+        // `sti` changes `IF`, so `preserves_flags` is deliberately not asserted.
+        asm!("sti", options(nomem, nostack));
+    }
+}
+
+/// Number of timer interrupts observed since boot.
+pub fn timer_ticks() -> u64 {
+    TIMER_TICKS.load(SeqCst)
+}
+
+/// Parks the CPU with `hlt` until the timer has fired at least `count` times.
+///
+/// `hlt` sleeps until the next interrupt; with the timer enabled this returns promptly. Used by the
+/// boot self-test, before any scheduler exists.
+pub fn wait_for_ticks(count: u64) {
+    while timer_ticks() < count {
+        // SAFETY: `hlt` is a privileged instruction that touches no memory and only suspends the
+        // core; the timer's handler resumes execution.
+        unsafe {
+            asm!("hlt", options(nomem, nostack, preserves_flags));
+        }
+    }
 }
 
 /// Runs both exception self-tests through the installed tables.
