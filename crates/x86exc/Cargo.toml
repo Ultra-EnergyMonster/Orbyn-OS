@@ -1,0 +1,11 @@
+[package]
+name = "x86exc"
+description = "x86-64 exception metadata and descriptor encoding (no_std) for the New OS kernel."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

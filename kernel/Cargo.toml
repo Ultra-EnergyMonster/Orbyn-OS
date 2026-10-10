@@ -9,6 +9,7 @@ publish.workspace = true
 bootloader_api = "0.11.17"
 physmem = { path = "../crates/physmem" }
 uart16550 = { path = "../crates/uart16550" }
+x86exc = { path = "../crates/x86exc" }
 
 [lints]
 workspace = true

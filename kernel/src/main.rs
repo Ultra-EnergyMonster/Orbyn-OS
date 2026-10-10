@@ -1,4 +1,4 @@
-//! New OS kernel — milestone 1 bootable prototype plus the first milestone-2 memory slice.
+//! New OS kernel — milestone 1 bootable prototype plus the milestone-2 memory and exception work.
 //!
 //! # Boot flow (see `docs/architecture/adr/ADR-0003-boot-path.md`)
 //!
@@ -11,22 +11,29 @@
 //!
 //! # What this code actually does
 //!
-//! Opens the COM1 serial console, reports a summary of what the bootloader handed over, validates
-//! the reported memory map with checked arithmetic (see [`report_memory_map`]), builds a bitmap
-//! physical frame allocator over validated usable regions, takes a small bootstrap allocation from
-//! it, prints `NEW_OS_KERNEL_MEMORY_OK`, prints `NEW_OS_KERNEL_BOOT_OK`, then halts the CPU.
+//! Opens the COM1 serial console, installs our own exception tables (GDT, TSS with a double-fault
+//! IST stack, and a 256-entry IDT; see [`interrupts`]) and proves them with a real breakpoint trap
+//! and a real, resumed page fault, then reports a summary of what the bootloader handed over,
+//! validates the reported memory map with checked arithmetic (see [`report_memory_map`]), builds a
+//! bitmap physical frame allocator over validated usable regions, takes a small bootstrap
+//! allocation from it, prints `NEW_OS_KERNEL_MEMORY_OK`, prints `NEW_OS_KERNEL_BOOT_OK`, then halts
+//! the CPU.
 //!
 //! # What this code does NOT do
 //!
 //! No virtual memory of our own: the kernel still runs on the page tables the `bootloader`
-//! component created, and nothing here maps, unmaps or protects anything. No interrupts,
-//! exceptions, timers or scheduling, no userspace or syscalls, no drivers beyond the debug UART, no
+//! component created, and nothing here maps, unmaps or protects anything. Exception handling
+//! exists, but **no interrupt sources are enabled** — `IF` stays clear, so there is no timer,
+//! no scheduling, no `sti`, and vectors 32+ are routed only so an unexpected one is reported
+//! rather than triple faulting. No userspace or syscalls, no drivers beyond the debug UART, no
 //! filesystem, no graphics output, no desktop and no Windows compatibility. The bootstrap frames
 //! handed out by [`allocate_bootstrap_frames`] are taken but not yet used for anything.
 //! See `docs/roadmap/MILESTONES.md` for the milestones that own those features.
 
 #![no_std]
 #![no_main]
+
+mod interrupts;
 
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use bootloader_api::{BootInfo, entry_point};
@@ -56,6 +63,13 @@ const BOOT_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_BOOT_OK";
 /// Also asserted by `tools/test/qemu-smoke.sh`, so the milestone-2 memory path cannot silently stop
 /// running without a test failing.
 const MEMORY_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_MEMORY_OK";
+
+/// Printed after the exception tables are installed and both exception self-tests have passed.
+///
+/// Also asserted by `tools/test/qemu-smoke.sh`. The marker is emitted only after a real breakpoint
+/// trap and a real page fault have been reported and resumed, so it cannot be printed by a kernel
+/// that merely loaded an IDT.
+const EXCEPTION_SUCCESS_MARKER: &str = "NEW_OS_KERNEL_EXCEPTION_OK";
 
 /// Physical address space the frame bitmap describes: the first 4 GiB.
 ///
@@ -111,7 +125,7 @@ static FRAME_BITMAP: FrameBitmapStorage =
 /// Logging never panics or blocks: [`SerialPort::write_byte`] bounds its own polling, so a missing
 /// or faulty UART degrades to dropped bytes. Callers that need transmit assurance (the boot
 /// markers) use [`write_marker`].
-fn write_line(console: &mut SerialPort, args: fmt::Arguments<'_>) {
+pub(crate) fn write_line(console: &mut SerialPort, args: fmt::Arguments<'_>) {
     let _ = Write::write_fmt(console, args);
     let _ = Write::write_char(console, '\n');
 }
@@ -150,6 +164,22 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         &mut console,
         format_args!("boot path: firmware -> bootloader 0.11 -> _start -> kernel_main"),
     );
+
+    // Install our own exception tables before anything that can fault (the memory-map walk and the
+    // frame allocator both touch untrusted data), then prove the path works end to end.
+    interrupts::init();
+    write_line(
+        &mut console,
+        format_args!("exceptions: GDT, TSS (IST for #DF) and 256-entry IDT installed"),
+    );
+    match interrupts::run_self_tests() {
+        Ok(()) => write_marker(&mut console, EXCEPTION_SUCCESS_MARKER),
+        Err(reason) => fatal(
+            &mut console,
+            format_args!("exception self-test failed: {reason}"),
+        ),
+    }
+
     report_boot_handoff(&mut console, boot_info);
 
     let Some(summary) = report_memory_map(&mut console, &boot_info.memory_regions) else {
@@ -606,7 +636,7 @@ fn panic(info: &PanicInfo) -> ! {
 ///
 /// `hlt` stops the core until the next interrupt, which is the correct idle state for a prototype
 /// with no scheduler. Interrupts are not enabled by this milestone, so the CPU stays parked.
-fn halt_forever() -> ! {
+pub(crate) fn halt_forever() -> ! {
     loop {
         // SAFETY: `hlt` is a privileged instruction that touches no memory and cannot violate a
         // Rust invariant; it only suspends the core. The surrounding infinite loop satisfies the

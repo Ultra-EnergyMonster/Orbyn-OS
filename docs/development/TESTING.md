@@ -12,9 +12,10 @@ Commands were run from the repository root on 2026-10-10 in the environment reco
 ```sh
 cargo fmt --all --check                                                    # formatting
 cargo clippy --target x86_64-unknown-none -p kernel -p uart16550 -- -D warnings   # bare-metal target
-cargo clippy -p uart16550 -p boot-image --all-targets -- -D warnings       # host-side crates
+cargo clippy -p physmem -p uart16550 -p x86exc -p boot-image --all-targets -- -D warnings  # host-side
 cargo test -p uart16550                                                    # host unit tests
 cargo test -p physmem                                                      # memory-map and allocator tests
+cargo test -p x86exc                                                       # exception encoding/decoding tests
 cargo build -p boot-image                                                  # kernel + boot images
 ./tools/test/qemu-smoke.sh bios                                            # boot smoke test (BIOS)
 ./tools/test/qemu-smoke.sh uefi                                            # boot smoke test (UEFI)
@@ -33,6 +34,7 @@ correctness. Tests are run per package.
 | `cargo clippy -p uart16550 -p boot-image --all-targets -- -D warnings` | Host-side crates (including test code) are warning-free | Runtime behaviour |
 | `cargo test -p uart16550` | The pure baud-divisor arithmetic and the port-handle accessor behave as asserted, on the host, without touching hardware | That real UART I/O works; that a boot happens |
 | `cargo test -p physmem` | Memory-map validation and the bitmap frame allocator behave as asserted for well-formed and malformed input, on the host, without touching hardware | That the firmware map on a real machine looks like the fixtures; that the kernel uses the allocator correctly |
+| `cargo test -p x86exc` | The exception vector metadata, the error-code table, the IDT gate bit layout, the table-pointer layout and page-fault error-code decoding behave as asserted, on the host | That the IDT is executed, that a fault is delivered, or that the assembly stubs/copies are correct |
 | `cargo build -p boot-image` | The kernel compiles for its target and the boot images can be generated | That the images boot |
 | `tools/test/qemu-smoke.sh bios\|uefi` | The generated image boots and the **guest kernel** prints `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on its own COM1 serial path, in that order — so the memory path cannot stop running without a failure | Physical hardware, other devices, virtual memory, interrupts, userspace, or any desktop/Windows-compatibility feature |
 
@@ -72,7 +74,10 @@ port-handle accessor. `crates/physmem` (21 tests) covers boot memory-map validat
 frame allocator: zero-length regions, unrepresentable end addresses, saturating byte totals, reversed
 start/end bounds, unsupported frame sizes, whole-frame-only usable marking, partial-frame
 reservation, bitmap-overflow reporting, non-usable claims overriding usable ones, allocation order
-and exhaustion, call-order enforcement, and rejected calls leaving state unchanged.
+and exhaustion, call-order enforcement, and rejected calls leaving state unchanged. `crates/x86exc`
+(10 tests) covers the exception vector names and reserved/unknown handling, the error-code table,
+the IDT gate bit layout including IST and DPL, the `GDTR`/`IDTR` pointer size and layout, and
+page-fault error-code decoding and display.
 
 Register-level I/O, the kernel entry path, the print/parsing wiring, the panic path and the halt
 loop are **not** unit tested; they are exercised by the QEMU boot test. No test was added purely to
@@ -84,7 +89,7 @@ raise a count.
 | --- | --- | --- |
 | Kernel unit tests | NOT APPLICABLE | The kernel is a `no_main` bare-metal binary; it cannot run the host test harness. Covered by the QEMU boot test instead. |
 | Integration/fault-injection tests | NOT RUN | No filesystem or syscall boundary exists yet; the memory paths added in M2 are covered by host unit tests plus the QEMU boot test. |
-| CPU fault diagnostics (page fault, double fault, GP fault) | NOT RUN | No IDT or fault handler exists yet; this is the remaining milestone-2 item. |
+| CPU fault diagnostics (page fault, breakpoint) | DONE (2026-10-10) | Our own GDT/TSS/IDT with a shared assembly path; a real `int3` trap and a real, resumed page fault are run in the boot path and asserted by the smoke test. See `docs/verification/M2-EXCEPTION-EVIDENCE.md`. A deliberate double fault on the IST stack and `#DB` remain NOT RUN. |
 | Virtual memory and page tables of our own | NOT RUN | Not implemented; the kernel runs on the bootloader's page tables. |
 | Fuzzing | NOT RUN | No untrusted-input parser exists yet. PE parsing and fuzzing are milestone M9. |
 | Physical hardware boot | NOT RUN | Out of scope for milestone 1; requires owner approval and a reviewed procedure. |

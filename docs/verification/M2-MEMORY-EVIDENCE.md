@@ -1,5 +1,11 @@
 # Milestone 2 Memory Evidence (first slice)
 
+> **Scope note (added after the exception slice):** every serial value below was produced by the
+> memory-slice kernel, before exception handling existed. The kernel now installs its own GDT/TSS/IDT
+> and runs two fault self-tests before the memory work, and `tools/test/qemu-smoke.sh` asserts a third
+> marker (`NEW_OS_KERNEL_EXCEPTION_OK`) *before* the two markers described here. The current boot
+> evidence is `docs/verification/M2-EXCEPTION-EVIDENCE.md`.
+
 **Date:** 2026-10-10
 **Branch:** `feat/m2-boot-memory-and-frame-allocator` (stacked on the milestone-1 branch, still
 unpushed)

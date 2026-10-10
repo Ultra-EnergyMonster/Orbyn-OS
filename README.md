@@ -4,7 +4,7 @@
 
 This repository blueprint describes an ambitious, independent x86-64-first desktop operating system. The OS will have its own kernel and architecture, a distinctive premium desktop with Windows-like usability, privacy-first defaults, no preinstalled bloatware or advertising, and a long-term goal of running a meaningful selection of Windows applications through a real compatibility implementation.
 
-**Repository contents today:** planning documents plus a milestone-1 bootable x86-64 kernel prototype that has its own kernel entry path and boots in QEMU. There is no desktop, window manager, driver stack, filesystem, userspace, installer, package manager or Windows compatibility runtime yet. Do not mistake the blueprint for a working OS.
+**Repository contents today:** planning documents plus a bootable x86-64 kernel prototype that has its own kernel entry path, boot memory handling and exception handling, and boots in QEMU. There is no desktop, window manager, driver stack, filesystem, userspace, installer, package manager or Windows compatibility runtime yet. Do not mistake the blueprint for a working OS.
 
 ## Current status
 
@@ -15,19 +15,22 @@ what has been observed.
 | --- | --- |
 | M1 bootable kernel skeleton | Implemented; build verified; unit tested; **QEMU boot tested (BIOS and UEFI)** |
 | M2 boot memory map + physical frame allocator | Implemented; unit tested (21 tests); **QEMU boot tested (BIOS and UEFI)**; no virtual memory, no deallocation |
-| Kernel virtual memory, exceptions/faults, interrupts, scheduling | Not started (rest of M2, M3) |
+| M2 exception reporting + controlled fatal handling | Implemented; unit tested (10 tests for the encoding/decoding); **QEMU boot tested (BIOS and UEFI)** with a real breakpoint trap and a real, resumed page fault |
+| Kernel virtual memory, interrupts/timers, scheduling | Not started (rest of M2, M3) |
 | Drivers beyond the debug UART | Not started (M4) |
 | Userspace, filesystem, packages | Not started (M5/M6) |
 | Desktop, file manager, settings | Not started (M7) |
 | Windows `.exe` recognition, PE loading, Win32 APIs | Not started (M8–M11) |
 
 The prototype is deliberately tiny: firmware hands control to the reused `bootloader` 0.11 component,
-which loads our kernel ELF and jumps to our `_start`/`kernel_main`. The kernel initialises COM1, prints
-a summary of the boot handoff, validates the firmware memory map, builds a bitmap physical frame
+which loads our kernel ELF and jumps to our `_start`/`kernel_main`. The kernel initialises COM1, installs
+its own GDT, TSS (with a double-fault IST stack) and 256-entry IDT, proves that path with a real
+breakpoint trap and a deliberately faulted, resumed page fault (`NEW_OS_KERNEL_EXCEPTION_OK`), prints a
+summary of the boot handoff, validates the firmware memory map, builds a bitmap physical frame
 allocator from the usable regions (reserving the first MiB and its own image), takes a small bootstrap
 allocation, prints `NEW_OS_KERNEL_MEMORY_OK` and then `NEW_OS_KERNEL_BOOT_OK` on the serial console, and
-halts. It does **not** create page tables, enable interrupts or exceptions, schedule tasks or run
-userspace, and the frames it hands out are not mapped to anything yet.
+halts. It does **not** create page tables of its own, enable interrupt sources (no timer, no `sti`),
+schedule tasks or run userspace, and the frames it hands out are not mapped to anything yet.
 
 ### Building and boot-testing the prototype
 
@@ -36,9 +39,11 @@ does need administrator rights on the host.
 
 ```sh
 # 1. Toolchain: rustup installs the pinned nightly from rust-toolchain.toml automatically.
-# 2. Run the host unit tests (UART divisor arithmetic, memory-map validation, frame allocator):
+# 2. Run the host unit tests (UART divisor arithmetic, memory-map validation, frame allocator,
+#    exception vector/descriptor/page-fault encoding and decoding):
 cargo test -p uart16550
 cargo test -p physmem
+cargo test -p x86exc
 
 # 3. Build the kernel and generate bootable images under build/boot/:
 cargo build -p boot-image
@@ -51,8 +56,8 @@ cargo build -p boot-image
 Debian/Ubuntu package needed for the boot test: `qemu-system-x86` (and `ovmf` for the UEFI mode).
 
 Exact tested versions and commands are recorded in `docs/development/BUILDING.md`,
-`docs/development/TESTING.md` and `docs/verification/M1-BOOT-EVIDENCE.md`. Where a tool was missing
-or a check could not run, that is recorded as `NOT RUN` rather than passed.
+`docs/development/TESTING.md` and the evidence records under `docs/verification/`. Where a tool was
+missing or a check could not run, that is recorded as `NOT RUN` rather than passed.
 
 ## Start here
 
@@ -72,6 +77,7 @@ or a check could not run, that is recorded as `NOT RUN` rather than passed.
 kernel/                 our kernel: entry point, serial diagnostics, boot memory handling, halt
 crates/uart16550/       polled 16550 UART driver used by the kernel for diagnostics
 crates/physmem/         boot memory-map validation and bitmap physical frame allocator (host-tested)
+crates/x86exc/          exception vectors, IDT/TSS descriptor encoding and page-fault decoding (host-tested)
 boot/image/             builds BIOS and UEFI disk images from the kernel ELF
 tools/test/qemu-smoke.sh bounded QEMU boot smoke test against a generated image
 build/                  generated images and test logs (gitignored, never committed)
