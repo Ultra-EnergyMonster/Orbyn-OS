@@ -1,7 +1,7 @@
 # Milestones and Acceptance Checklist
 
-**Status:** M0 is in progress (its documented checks now pass from a fresh clone, but the
-unresolved licence question and a first CI run are still outstanding), M1 is verified (2026-10-10,
+**Status:** M0 is in progress (its documented checks now pass from a fresh clone and the first CI run
+has since passed, but the unresolved licence question is still outstanding), M1 is verified (2026-10-10,
 QEMU boot tested), M2 is in progress (memory-map validation, bootstrap frame allocation, exception reporting/controlled
 fatal handling and read-only address translation are done; our own page tables and virtual memory are
 not), M3 is in progress (a PIT timer interrupt source is done; synchronisation primitives and the task/process model
@@ -36,7 +36,8 @@ Use a status of `PLANNED`, `IN PROGRESS`, `BLOCKED`, or `VERIFIED`. For a VERIFI
 - **Gate:** clean checkout can run documented checks; no secrets or accidental binaries committed. —
       Met for this host: the documented checks pass from a fresh clone, nothing generated (`/build/`,
       `/target/`) is committed, and the staged set was reviewed for secrets. The CI workflow itself
-      has still never executed.
+      has since executed and passed (2026-10-10): it ran on the exception branch's pull request and on
+      the resulting push to `main` (GitHub Actions run list, conclusion `success` for both).
 
 ## M1 — Bootable x86-64 kernel skeleton — `VERIFIED` (2026-10-10)
 
@@ -64,7 +65,8 @@ output, negative control, and an independent re-run including build-hygiene chec
 Explicitly **not** proven by M1: byte-for-byte reproducibility of the UEFI image (measured and found
 false — the BIOS image *is* byte-identical across regenerations), physical hardware,
 KVM-accelerated runs, and any memory, interrupt, driver, userspace or Windows-compatibility
-capability. The CI workflow has also never executed (nothing has been pushed yet).
+capability. The CI workflow has since run and passed on a tree that contains this milestone
+(2026-10-10).
 
 ## M2 — Boot info, memory and fault diagnostics — `IN PROGRESS`
 

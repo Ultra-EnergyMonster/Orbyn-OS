@@ -128,4 +128,4 @@ not returning a plausible-looking constant.
 | `map`/`unmap`, guard pages, `W^X`, NX | NOT RUN | No page-table ownership yet |
 | 5-level paging | NOT RUN | 4-level only, matching the boot component's configuration |
 | Physical hardware boot | NOT RUN | Out of scope; requires owner approval and a reviewed procedure |
-| CI execution | NOT RUN | The workflow has not run yet (triggered by `main` pushes or pull requests) |
+| CI execution for this branch | NOT RUN | No pull request has been opened for this branch, so the workflow has not run on it. It has run and passed on `main` and on the exception branch's PR (2026-10-10). |

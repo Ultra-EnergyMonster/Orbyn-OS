@@ -154,4 +154,4 @@ the table above).
 | Physical hardware boot | NOT RUN | Out of scope; requires owner approval and a reviewed procedure |
 | KVM-accelerated run | NOT RUN | Only `tcg` was used, for comparability with CI |
 | Fuzzing of the descriptor/vector encoding | NOT RUN | The inputs are kernel constants, not untrusted data; PE parsing and fuzzing are milestone M9 |
-| CI execution | NOT RUN | Nothing has been pushed; the workflow has still never executed |
+| CI execution | DONE (2026-10-10) | The workflow ran and passed on this branch's pull request (#1) and on the resulting `main` push; both runs completed with conclusion `success` |

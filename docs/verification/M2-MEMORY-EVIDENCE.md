@@ -151,4 +151,4 @@ bootstrap range starting at `0x000000000014e000`; the same two markers were emit
 | KVM-accelerated run | NOT RUN | Only `tcg` was used, for comparability with CI |
 | Reproducible-image comparison | ATTEMPTED, NOT ESTABLISHED | See limitation 2 |
 | Fuzzing of the memory-map validation | NOT RUN | The validator is unit tested against malformed maps; fuzzing is scheduled with the parser work in milestone 9 |
-| CI execution | NOT RUN | Nothing has been pushed; the workflow has still never executed |
+| CI execution | DONE (2026-10-10) | This branch was stacked under the exception branch, so the pull request (#1) ran the workflow on a tree that contains the memory work, and it passed |

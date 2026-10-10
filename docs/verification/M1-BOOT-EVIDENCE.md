@@ -154,5 +154,5 @@ and the handoff fields are what the test asserts on.
 | Physical hardware boot | NOT RUN | Out of scope for M1; requires owner approval and a reviewed procedure. |
 | Kernel unit tests | NOT APPLICABLE | Bare-metal binary cannot run the host test harness. |
 | Fuzzing / untrusted input parsers | NOT RUN | No parser exists yet; starts at M9. |
-| CI execution of this workflow | NOT RUN | The workflow was authored and reviewed locally but no push/CI run has happened yet. Treating it as passing would be false. |
+| CI execution of this workflow | DONE (2026-10-10, on a later commit) | The workflow has since run and passed on `main` and on the exception branch's pull request, whose checkout contains this milestone's code. No run targeted this exact commit. |
 | Reproducible-image comparison | ATTEMPTED, NOT ESTABLISHED | Repeated regenerations did not consistently produce identical bytes; see checks 6 and 7 and limitation 2 of the milestone-2 evidence. |
